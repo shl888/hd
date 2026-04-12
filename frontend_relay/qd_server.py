@@ -210,7 +210,7 @@ class FrontendRelayServer:
                                             elif msg_type == 'get_stats':
                                                 logger.info(f"📊【客户端】收到统计指令数据，转发给 stats_handler")
                                                 
-                                                import stats_handler
+                                                from . import stats_handler
                                                 stats_handler.process_stats_command(json.loads(msg2.data))
                                                 
                                                 self.stats["commands_processed"] += 1
