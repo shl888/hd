@@ -1,33 +1,6 @@
 # frontend_relay/stats_handler.py
 """
-交易数据统计处理器 -
-======================================================================
-【文件职责】
-这个文件是一个独立的专门处理交易数据统计请求。
-
-【数据流向】
-qd_server 收到前端 get_stats 指令数据
-        ↓
-转发给 stats_handler.process_stats_command(data)
-        ↓
-StatsHandler 自己：
-    1. 解析时间范围
-    2. 连接 MongoDB，查询 closed_positions 集合
-    3. 按交易所分组 → 配对筛选（套利 vs 单边）
-    4. 计算 15 个统计指标
-    5. 把结果交给 qd_server 推送给前端
-
-【依赖说明】
-- 只依赖环境变量 MONGODB_URI
-- 不依赖大脑实例、不依赖存储区
-- 按需连接 MongoDB，用完即关
-
-【可调参数】
-- TIME_DIFF_THRESHOLD = 60  # 套利配对时间差阈值（秒）
-- LEVERAGE = 20             # 固定杠杆倍数
-- FEE_RATE = 0.001          # 手续费率 0.1%（开仓+平仓合计）
-- DECIMAL_PLACES = 4        # 保留小数位数
-======================================================================
+交易数据统计处理器
 """
 
 import os
@@ -41,24 +14,60 @@ from pymongo import MongoClient
 logger = logging.getLogger(__name__)
 
 # ==================== 可调参数 ====================
-TIME_DIFF_THRESHOLD = 60  # 套利配对时间差阈值（秒）
-LEVERAGE = 20             # 固定杠杆倍数
-FEE_RATE = 0.001          # 手续费率 0.1%（开仓+平仓合计）
-DECIMAL_PLACES = 4        # 保留小数位数
+TIME_DIFF_THRESHOLD = 60
+LEVERAGE = 20
+FEE_RATE = 0.001
+DECIMAL_PLACES = 4
 
 
 class StatsHandler:
-    """
-    交易数据统计处理器 - 独立工作
-    """
+    """交易数据统计处理器"""
     
-    def __init__(self):
-        """初始化处理器，从环境变量读取 MongoDB 连接信息"""
+    def __init__(self, qd_server_instance):
+        """
+        初始化处理器
+        
+        Args:
+            qd_server_instance: qd_server 实例引用，用于回传结果
+        """
+        self.qd_server = qd_server_instance
         self.mongo_uri = os.getenv('MONGODB_URI')
         if not self.mongo_uri:
             logger.error("❌ 【数据统计处理器】环境变量 MONGODB_URI 未设置")
         else:
             logger.info("✅ 【数据统计处理器】MongoDB 连接信息已读取")
+    
+    async def handle_stats_command(self, data: Dict):
+        """
+        处理统计指令
+        
+        Args:
+            data: 包含 command, params, client_id, ws
+        """
+        logger.info(f"📊 【数据统计处理器】收到统计指令数据")
+        logger.info(f" 【数据统计处理器】  指令内容: {data}")
+        
+        client_id = data.get('client_id', '')
+        params = data.get('params', {})
+        range_param = params.get('range', 'all')
+        start_time = params.get('start', '')
+        end_time = params.get('end', '')
+        
+        try:
+            logger.info(f" 【数据统计处理器】  解析参数: range={range_param}, start={start_time}, end={end_time}")
+            
+            if start_time and end_time:
+                result = await self._get_summary_by_range(start_time, end_time)
+            else:
+                result = await self._get_summary(range_param)
+            
+            logger.info(f"✅【数据统计处理器】 统计任务完成，净盈亏: {result['net_pnl']}")
+            
+            logger.info(f"📤【数据统计处理器】 将统计结果交给 qd_server")
+            await self.qd_server.receive_stats_result(client_id, result)
+            
+        except Exception as e:
+            logger.error(f"❌ 【数据统计处理器】统计任务执行失败: {e}", exc_info=True)
     
     async def _get_summary(self, range_param: str) -> Dict[str, Any]:
         """按预设范围查询"""
@@ -67,28 +76,22 @@ class StatsHandler:
     
     async def _get_summary_by_range(self, start_time: Optional[str], end_time: Optional[str]) -> Dict[str, Any]:
         """按自定义范围查询"""
-        # 1. 从 MongoDB 查询数据
         records = await self._fetch_records(start_time, end_time)
         logger.info(f" 【数据统计处理器】  从数据库读取 {len(records)} 条记录")
         
         if not records:
             return self._empty_result()
         
-        # 2. 按交易所分组
         okx_records, binance_records = self._group_by_exchange(records)
         logger.debug(f"   欧易: {len(okx_records)} 条, 币安: {len(binance_records)} 条")
         
-        # 3. 配对筛选
         okx_paired, binance_paired = self._match_pairs(okx_records, binance_records)
-        logger.info(f"  【数据统计处理器】 配对成功: 欧易 {len(okx_paired)} 条, 币安 {len(binance_paired)} 条")
+        logger.info(f" 【数据统计处理器】  配对成功: 欧易 {len(okx_paired)} 条, 币安 {len(binance_paired)} 条")
         
         if not okx_paired or not binance_paired:
             return self._empty_result()
         
-        # 4. 计算指标
         return self._calculate(okx_paired, binance_paired)
-    
-    # ==================== 时间范围解析 ====================
     
     def _parse_time_range(self, range_param: str) -> Tuple[Optional[str], Optional[str]]:
         """解析时间范围参数"""
@@ -110,10 +113,8 @@ class StatsHandler:
         format_str = '%Y.%m.%d %H:%M:%S'
         return start_time.strftime(format_str), end_time.strftime(format_str)
     
-    # ==================== 数据库查询 ====================
-    
     async def _fetch_records(self, start_time: Optional[str], end_time: Optional[str]) -> List[Dict]:
-        """从 MongoDB 的 closed_positions 集合查询数据"""
+        """从 MongoDB 查询数据"""
         if not self.mongo_uri:
             logger.error("❌ 【数据统计处理器】MONGODB_URI 未设置")
             return []
@@ -154,8 +155,6 @@ class StatsHandler:
             if client:
                 await loop.run_in_executor(None, client.close)
     
-    # ==================== 数据分组 ====================
-    
     def _group_by_exchange(self, records: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
         """按交易所分组"""
         okx_records = []
@@ -170,10 +169,8 @@ class StatsHandler:
         
         return okx_records, binance_records
     
-    # ==================== 配对算法 ====================
-    
     def _match_pairs(self, okx_records: List[Dict], binance_records: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
-        """配对筛选：时间差 ≤ 60秒 + 合约名相同"""
+        """配对筛选"""
         okx_paired = []
         binance_paired = []
         available_binance = list(binance_records)
@@ -214,7 +211,7 @@ class StatsHandler:
         return okx_paired, binance_paired
     
     def _time_diff_seconds(self, time_str1: str, time_str2: str) -> float:
-        """计算两个时间字符串的差值（秒）"""
+        """计算时间差"""
         try:
             fmt = '%Y.%m.%d %H:%M:%S'
             dt1 = datetime.strptime(time_str1, fmt)
@@ -223,25 +220,20 @@ class StatsHandler:
         except Exception:
             return float('inf')
     
-    # ==================== 指标计算 ====================
-    
     def _calculate(self, okx_records: List[Dict], binance_records: List[Dict]) -> Dict[str, Any]:
-        """计算所有统计指标"""
-        # 欧易
+        """计算统计指标"""
         okx_trades = len(okx_records)
         okx_avg_margin = self._calc_avg(okx_records, '开仓保证金')
         okx_total_funding = self._calc_sum(okx_records, '累计资金费')
         okx_total_profit = self._calc_sum(okx_records, '平仓收益')
         okx_total_fee = okx_avg_margin * LEVERAGE * FEE_RATE * okx_trades
         
-        # 币安
         binance_trades = len(binance_records)
         binance_avg_margin = self._calc_avg(binance_records, '开仓保证金')
         binance_total_funding = self._calc_sum(binance_records, '累计资金费')
         binance_total_profit = self._calc_sum(binance_records, '平仓收益')
         binance_total_fee = binance_avg_margin * LEVERAGE * FEE_RATE * binance_trades
         
-        # 套利结果
         net_fee = okx_total_fee + binance_total_fee
         net_funding = okx_total_funding + binance_total_funding
         net_profit = okx_total_profit + binance_total_profit
@@ -307,46 +299,3 @@ class StatsHandler:
             'net_pnl': 0.0,
             'net_pnl_rate': 0.0,
         }
-
-
-# ==================== 统计指令处理入口 ====================
-
-def process_stats_command(data):
-    """
-    接收 qd_server 转发来的统计指令数据，开始干活
-    """
-    logger.info(f"📊 【数据统计处理器】收到统计指令数据")
-    logger.info(f"【数据统计处理器】   指令内容: {data}")
-    
-    handler = StatsHandler()
-    asyncio.create_task(handler._execute_stats_task(data))
-
-
-async def _execute_stats_task(self, data):
-    """
-    执行统计任务：解析数据、查询数据库、计算指标、交给 qd_server
-    """
-    try:
-        # 解析参数
-        params = data.get('params', {})
-        range_param = params.get('range', 'all')
-        start_time = params.get('start', '')
-        end_time = params.get('end', '')
-        
-        logger.info(f"  【数据统计处理器】 解析参数: range={range_param}, start={start_time}, end={end_time}")
-        
-        # 查询并计算
-        if start_time and end_time:
-            result = await self._get_summary_by_range(start_time, end_time)
-        else:
-            result = await self._get_summary(range_param)
-        
-        logger.info(f"✅ 【数据统计处理器】统计任务完成，净盈亏: {result['net_pnl']}")
-        
-        # 交给 qd_server
-        
-        from frontend_relay.qd_server import frontend_relay_instance
-        frontend_relay_instance.receive_stats_result(result)
-        logger.info(f"📤 【数据统计处理器】将统计结果交给 qd_server")
-    except Exception as e:
-        logger.error(f"❌ 【数据统计处理器】统计任务执行失败: {e}", exc_info=True)

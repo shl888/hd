@@ -164,8 +164,8 @@ class FrontendRelayServer:
                                             
                                             elif msg_type == 'set_sl_tp':
                                                 logger.debug(f"⚙️【客户端】收到止损止盈指令，准备转发给大脑")
-                                                logger.info(f"   参数: {data2.get('data', {})}")
-                                                logger.info(f"   客户端: {client_id}")
+                                                logger.debug(f"   参数: {data2.get('data', {})}")
+                                                logger.debug(f"   客户端: {client_id}")
                                                 
                                                 await self.brain.handle_frontend_command({
                                                     "command": "set_sl_tp",
@@ -422,7 +422,7 @@ class FrontendRelayServer:
         response.headers['X-Accel-Buffering'] = 'no'  # 禁用 Nginx 缓冲
         await response.prepare(request)
         
-        logger.info(f"📋【日志流】开始推送，tail={tail_num}, keyword={keyword if keyword else '无'}")
+        logger.info(f"📋【客户端】【日志流】开始推送，tail={tail_num}, keyword={keyword if keyword else '无'}")
         
         try:
             # 4. 先推送最近 N 条历史日志
@@ -453,7 +453,7 @@ class FrontendRelayServer:
                 await response.write(line)
                 
         except asyncio.CancelledError:
-            logger.info("📋【日志流】客户端断开连接")
+            logger.info("📋【客户端】【日志流】客户端断开连接")
             raise
         except Exception as e:
             logger.error(f"❌【日志流】推送失败: {e}")
@@ -526,7 +526,7 @@ class FrontendRelayServer:
         else:
             full_cmd = f"{base_cmd} 2>&1 | tail -n {limit_num}"
         
-        logger.info(f"📋【历史日志】查询: range={time_range}, keyword={keyword if keyword else '无'}, limit={limit_num}")
+        logger.info(f"📋【客户端】【历史日志】查询: range={time_range}, keyword={keyword if keyword else '无'}, limit={limit_num}")
         
         try:
             # 4. 执行命令
