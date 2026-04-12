@@ -785,7 +785,7 @@ class FrontendRelayServer:
         """
         接收 stats_handler 发来的统计结果，推送给所有已认证的前端
         """
-        logger.info(f"📊【客户端】收到 stats_handler 的统计结果，推送给前端")
+        logger.info(f"📊【客户端】收到 stats_handler 的统计结果数据，推送给前端")
         
         message = {
             "type": "stats_result",

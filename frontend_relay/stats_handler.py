@@ -50,10 +50,6 @@ DECIMAL_PLACES = 4        # 保留小数位数
 class StatsHandler:
     """
     交易数据统计处理器 - 独立工作
-    
-    qd_server 调用方式：
-        handler = StatsHandler()
-        await handler.handle(ws, data, client_id)
     """
     
     def __init__(self):
@@ -64,49 +60,6 @@ class StatsHandler:
         else:
             logger.info("✅ 【数据统计处理器】MongoDB 连接信息已读取")
     
-    # ==================== 对外唯一入口 ====================
-    
-    async def handle(self, ws, data: Dict, client_id: str):
-        """
-        处理统计请求（qd_server 调用的入口）
-        
-        Args:
-            ws: WebSocket 连接对象，用于推送结果
-            data: 前端发来的数据，包含 params.range 或 params.start/end
-            client_id: 客户端 ID
-        """
-        logger.info(f"📊 【数据统计处理器】收到请求，客户端: {client_id}")
-        
-        # 1. 从 params 里解析参数
-        params = data.get('params', {})
-        range_param = params.get('range', 'all')
-        start_time = params.get('start', '')
-        end_time = params.get('end', '')
-        
-        try:
-            # 2. 获取统计数据
-            if start_time and end_time:
-                result = await self._get_summary_by_range(start_time, end_time)
-            else:
-                result = await self._get_summary(range_param)
-            
-            # 3. 推送结果给前端
-            await ws.send_json({
-                "type": "stats_result",
-                "data": result,
-                "client_id": client_id
-            })
-            logger.info(f"✅ 【数据统计处理器】结果已推送，净盈亏: {result['net_pnl']}")
-            
-        except Exception as e:
-            logger.error(f"❌ 【数据统计处理器】处理失败: {e}", exc_info=True)
-            await ws.send_json({
-                "type": "stats_result",
-                "data": self._empty_result(),
-                "error": str(e),
-                "client_id": client_id
-            })
-    
     async def _get_summary(self, range_param: str) -> Dict[str, Any]:
         """按预设范围查询"""
         start_time, end_time = self._parse_time_range(range_param)
@@ -116,7 +69,7 @@ class StatsHandler:
         """按自定义范围查询"""
         # 1. 从 MongoDB 查询数据
         records = await self._fetch_records(start_time, end_time)
-        logger.info(f"   从数据库读取 {len(records)} 条记录")
+        logger.info(f" 【数据统计处理器】  从数据库读取 {len(records)} 条记录")
         
         if not records:
             return self._empty_result()
@@ -127,7 +80,7 @@ class StatsHandler:
         
         # 3. 配对筛选
         okx_paired, binance_paired = self._match_pairs(okx_records, binance_records)
-        logger.info(f"   配对成功: 欧易 {len(okx_paired)} 条, 币安 {len(binance_paired)} 条")
+        logger.info(f"  【数据统计处理器】 配对成功: 欧易 {len(okx_paired)} 条, 币安 {len(binance_paired)} 条")
         
         if not okx_paired or not binance_paired:
             return self._empty_result()
@@ -363,7 +316,7 @@ def process_stats_command(data):
     接收 qd_server 转发来的统计指令数据，开始干活
     """
     logger.info(f"📊 【数据统计处理器】收到统计指令数据")
-    logger.info(f"   指令内容: {data}")
+    logger.info(f"【数据统计处理器】   指令内容: {data}")
     
     handler = StatsHandler()
     asyncio.create_task(handler._execute_stats_task(data))
@@ -380,7 +333,7 @@ async def _execute_stats_task(self, data):
         start_time = params.get('start', '')
         end_time = params.get('end', '')
         
-        logger.info(f"   解析参数: range={range_param}, start={start_time}, end={end_time}")
+        logger.info(f"  【数据统计处理器】 解析参数: range={range_param}, start={start_time}, end={end_time}")
         
         # 查询并计算
         if start_time and end_time:
@@ -388,11 +341,12 @@ async def _execute_stats_task(self, data):
         else:
             result = await self._get_summary(range_param)
         
-        logger.info(f"✅ 统计任务完成，净盈亏: {result['net_pnl']}")
+        logger.info(f"✅ 【数据统计处理器】统计任务完成，净盈亏: {result['net_pnl']}")
         
         # 交给 qd_server
+        
         from frontend_relay.qd_server import frontend_relay_instance
         frontend_relay_instance.receive_stats_result(result)
-        
+        logger.info(f"📤 【数据统计处理器】将统计结果交给 qd_server")
     except Exception as e:
-        logger.error(f"❌ 统计任务执行失败: {e}", exc_info=True)
+        logger.error(f"❌ 【数据统计处理器】统计任务执行失败: {e}", exc_info=True)
