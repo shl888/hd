@@ -135,21 +135,21 @@ class StatsHandler:
             logger.info(f"📊 【数据统计处理器】【步骤2】开始获取数据库数据...")
             
             if start_time and end_time:
-                logger.info(f"   - 使用自定义时间范围: {start_time} ~ {end_time}")
+                logger.debug(f"   - 使用自定义时间范围: {start_time} ~ {end_time}")
                 result = await self._get_summary_by_range(start_time, end_time)
             else:
-                logger.info(f"   - 使用预设时间范围: {range_param}")
+                logger.debug(f"   - 使用预设时间范围: {range_param}")
                 result = await self._get_summary(range_param)
             
             # ========== 3. 打印结果摘要 ==========
             logger.info(f"📊 【数据统计处理器】【步骤3】统计计算完成")
-            logger.info(f"   - 欧易交易笔数: {result.get('okx_trades', 0)}")
-            logger.info(f"   - 币安交易笔数: {result.get('binance_trades', 0)}")
-            logger.info(f"   - 总手续费: {result.get('net_fee', 0.0):.4f} U")
-            logger.info(f"   - 总资金费: {result.get('net_funding', 0.0):.4f} U")
-            logger.info(f"   - 总平仓收益: {result.get('net_profit', 0.0):.4f} U")
-            logger.info(f"   - 净盈亏: {result.get('net_pnl', 0.0):.4f} U")
-            logger.info(f"   - 净盈亏率: {result.get('net_pnl_rate', 0.0):.2f}%")
+            logger.debug(f"   - 欧易交易笔数: {result.get('okx_trades', 0)}")
+            logger.debug(f"   - 币安交易笔数: {result.get('binance_trades', 0)}")
+            logger.debug(f"   - 总手续费: {result.get('net_fee', 0.0):.4f} U")
+            logger.debug(f"   - 总资金费: {result.get('net_funding', 0.0):.4f} U")
+            logger.debug(f"   - 总平仓收益: {result.get('net_profit', 0.0):.4f} U")
+            logger.debug(f"   - 净盈亏: {result.get('net_pnl', 0.0):.4f} U")
+            logger.debug(f"   - 净盈亏率: {result.get('net_pnl_rate', 0.0):.2f}%")
             
             # ========== 4. 调用 qd_server 推送结果 ==========
             logger.debug(f"📊 【数据统计处理器】【步骤4】调用 qd_server.broadcast_stats_result() 推送结果...")
