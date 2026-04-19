@@ -4,6 +4,7 @@
 
 from .core import SmartBrain
 from .data_manager import DataManager
+from .tag_dispatcher import TagDispatcher
 
 # 注意：command_router 已删除，不再导入
 
@@ -32,6 +33,7 @@ def receive_private_data(data):
 __all__ = [
     'SmartBrain',
     'DataManager',
+    'TagDispatcher',
     'set_brain_instance',
     'receive_private_data',
 ]

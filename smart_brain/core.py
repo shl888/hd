@@ -4,8 +4,9 @@
 职责：
 - 初始化和管理所有工人（半自动、全自动、下单工人）
 - 接收前端指令，转发给对应工人
-- 接收下单工人返回的结果，根据信息标签转发给对应工人
+- 接收下单工人返回的执行结果，推送到前端
 - 管理交易模式（禁止交易 / 半自动 / 全自动）
+- 生成并发送内部标签（开启全自动 / 结束全自动）
 - 不解析指令内容，不处理业务逻辑
 """
 
@@ -35,6 +36,7 @@ class SmartBrain:
     - 大脑只做转发，不处理业务逻辑
     - 工人各自独立，通过数据驱动工作
     - 交易模式控制：禁止交易（禁止）/ 半自动（半自动）/ 全自动（全自动）
+    - 标签调度器：专门处理外部标签的接收与转发
     """
     
     def __init__(self, http_server=None, http_runner=None, 
@@ -54,6 +56,9 @@ class SmartBrain:
 
         # ========== HTTP模块服务（用于执行交易） ==========
         self.http_module = None
+        
+        # ========== 标签调度器 ==========
+        self.tag_dispatcher = None
         
         # ========== 下单工人（只负责执行，大脑不直接发数据给它） ==========
         self.trader = None
@@ -110,13 +115,7 @@ class SmartBrain:
                 logger.error(f"❌【智能大脑】HTTP模块服务初始化异常: {e}")
                 return False
             
-            # 2. 创建下单工人
-            from http_server.trader import Trader
-            self.trader = Trader(self, use_sandbox=True)
-            asyncio.create_task(self.trader.start())
-            logger.info("✅【智能大脑】下单工人已创建并启动")
-            
-            # 3. 创建半自动工人
+            # 2. 创建半自动工人（先创建，因为标签调度器需要它们）
             from .trading.semi_auto.leverage_worker import LeverageWorker
             from .trading.semi_auto.open_position_worker import OpenPositionWorker
             from .trading.semi_auto.sl_tp_worker import SlTpWorker
@@ -128,7 +127,7 @@ class SmartBrain:
             self.close_worker = ClosePositionWorker(self)
             logger.info("✅【智能大脑】半自动工人已创建（杠杆、开仓、止损止盈、平仓）")
             
-            # 4. 创建全自动工人
+            # 3. 创建全自动工人
             from .trading.full_auto import AutoOpen, AutoSlTp, AutoClose
             
             self.auto_open = AutoOpen(self)
@@ -136,10 +135,26 @@ class SmartBrain:
             self.auto_close = AutoClose(self)
             logger.info("✅【智能大脑】全自动工人已创建（侦察兵、止损止盈、清仓）")
             
-            # 5. 启动状态日志任务
+            # 4. 创建标签调度器
+            from .tag_dispatcher import TagDispatcher
+            self.tag_dispatcher = TagDispatcher(
+                open_worker=self.open_worker,
+                auto_sltp=self.auto_sltp
+            )
+            logger.info("✅【智能大脑】标签调度器已创建")
+            
+            # 5. 创建下单工人
+            from http_server.trader import Trader
+            self.trader = Trader(self, use_sandbox=True)
+            # 将标签调度器注入给下单工人
+            self.trader.tag_dispatcher = self.tag_dispatcher
+            asyncio.create_task(self.trader.start())
+            logger.info("✅【智能大脑】下单工人已创建并启动（已注入标签调度器）")
+            
+            # 6. 启动状态日志任务
             self.status_log_task = asyncio.create_task(self.data_manager._log_data_status())
             
-            # 6. 完成初始化
+            # 7. 完成初始化
             self.running = True
             logger.info("✅【智能大脑】大脑核心初始化完成")
             
@@ -165,43 +180,21 @@ class SmartBrain:
         """接收私人数据（委托给data_manager）"""
         return await self.data_manager.receive_private_data(private_data)
     
-    # ==================== 接收下单工人返回的结果 ====================
+    # ==================== 接收下单工人返回的执行结果 ====================
     
     async def on_trader_results(self, data):
         """
-        接收下单工人发来的数据（独立的一条数据）
+        接收下单工人发来的执行结果数据（不包含标签）
         
-        判断规则：
-        - 如果数据里有 "info" 字段 → 这是信息标签，根据内容转发给对应工人
-        - 否则 → 这是交易执行结果原始数据，直接推送到前端
+        标签已经由下单工人直接发给标签调度器，大脑不再接收标签。
+        这里只接收纯执行结果数据，直接推送到前端。
         """
-        # 判断是否是信息标签
-        if "info" in data:
-            info_value = data["info"]
-            logger.info(f"🏷️【智能大脑】收到信息标签: {info_value}")
-            
-            # 根据标签内容路由
-            if info_value in ["欧易杠杆设置成功", "币安杠杆设置成功"]:
-                # 转发给半自动开仓工人
-                if self.open_worker:
-                    self.open_worker.on_data(data)
-                    logger.info(f"📤【智能大脑】信息标签已转发给开仓工人: {info_value}")
-            
-            elif info_value in ["欧易开仓成功", "币安开仓成功"]:
-                # 转发给全自动止损止盈工人
-                if self.auto_sltp:
-                    self.auto_sltp.on_data(data)
-                    logger.info(f"📤【智能大脑】开仓成功标签已转发给全自动止损止盈工人: {info_value}")
-            
-            else:
-                logger.warning(f"⚠️【智能大脑】未知信息标签: {info_value}")
+        # 直接推送到前端
+        if self.frontend_relay:
+            await self.frontend_relay.broadcast_execution_results([data])
+            logger.info(f"📤【智能大脑】交易执行结果已推送到前端")
         else:
-            # 交易执行结果原始数据，直接推送到前端
-            if self.frontend_relay:
-                await self.frontend_relay.broadcast_execution_results([data])
-                logger.info(f"📤【智能大脑】交易执行结果原始数据已推送到前端")
-            else:
-                logger.warning("⚠️【智能大脑】frontend_relay 未设置，无法推送")
+            logger.warning("⚠️【智能大脑】frontend_relay 未设置，无法推送执行结果")
     
     # ==================== 前端指令处理 ====================
     
