@@ -1,6 +1,6 @@
 # trading/semi_auto/leverage_worker.py
 """
-杠杆工人 - 独立负责设置杠杆
+半自动杠杆工人 - 独立负责设置杠杆
 
 工作流程：
 1. 收到开仓指令 → 缓存
@@ -33,12 +33,12 @@ class LeverageWorker:
         self.okx_cache = None
         self.binance_cache = None
         
-        logger.info("🔧【杠杆工人】初始化完成")
+        logger.info("🔧【半自动杠杆工人】初始化完成")
     
     def on_data(self, data: Dict[str, Any]):
         """接收大脑推送的数据"""
         if data.get("command") == "place_order":
-            logger.info("📥【杠杆工人】收到开仓指令")
+            logger.info("📥【半自动杠杆工人】收到开仓指令")
             self.pending_command = data.get("command")
             self.pending_params = data.get("params", {})
             asyncio.create_task(self._execute())
@@ -46,16 +46,16 @@ class LeverageWorker:
     async def _execute(self):
         """执行杠杆设置流程"""
         if not self.pending_params:
-            logger.error("❌【杠杆工人】没有开仓参数")
+            logger.error("❌【半自动杠杆工人】没有开仓参数")
             self._cleanup()
             return
         
-        logger.info("🔧【杠杆工人】开始执行")
+        logger.info("🔧【半自动杠杆工人】开始执行")
         
         # 1. 拷贝模板
         self.okx_cache = copy.deepcopy(SET_LEVERAGE_OKX)
         self.binance_cache = copy.deepcopy(SET_LEVERAGE_BINANCE)
-        logger.info("📦【杠杆工人】模板已拷贝")
+        logger.info("📦【半自动杠杆工人】模板已拷贝")
         
         # 2. 检查持仓
         if not await self._check_position():
@@ -76,7 +76,7 @@ class LeverageWorker:
         # 6. 清理
         self._cleanup()
         
-        logger.info("✅【杠杆工人】完成")
+        logger.info("✅【半自动杠杆工人】完成")
     
     async def _check_position(self) -> bool:
         """检查持仓：开仓合约名字段为空才能继续"""
@@ -88,17 +88,17 @@ class LeverageWorker:
             binance_symbol = user_data.get('binance', {}).get('开仓合约名', '')
             
             if okx_symbol:
-                logger.warning(f"⚠️【杠杆工人】欧易已有持仓: {okx_symbol}，禁止开仓")
+                logger.warning(f"⚠️【半自动杠杆工人】欧易已有持仓: {okx_symbol}，禁止开仓")
                 return False
             if binance_symbol:
-                logger.warning(f"⚠️【杠杆工人】币安已有持仓: {binance_symbol}，禁止开仓")
+                logger.warning(f"⚠️【半自动杠杆工人】币安已有持仓: {binance_symbol}，禁止开仓")
                 return False
             
-            logger.info("✅【杠杆工人】持仓检查通过，当前空仓")
+            logger.info("✅【半自动杠杆工人】持仓检查通过，当前空仓")
             return True
             
         except Exception as e:
-            logger.error(f"❌【杠杆工人】检查持仓失败: {e}")
+            logger.error(f"❌【半自动杠杆工人】检查持仓失败: {e}")
             return False
     
     async def _check_margin(self) -> bool:
@@ -116,17 +116,17 @@ class LeverageWorker:
             binance_limit = binance_asset * 0.7
             
             if margin > okx_limit:
-                logger.warning(f"⚠️【杠杆工人】保证金 {margin} 超过欧易账户资产70% ({okx_limit:.2f})")
+                logger.warning(f"⚠️【半自动杠杆工人】保证金 {margin} 超过欧易账户资产70% ({okx_limit:.2f})")
                 return False
             if margin > binance_limit:
-                logger.warning(f"⚠️【杠杆工人】保证金 {margin} 超过币安账户资产70% ({binance_limit:.2f})")
+                logger.warning(f"⚠️【半自动杠杆工人】保证金 {margin} 超过币安账户资产70% ({binance_limit:.2f})")
                 return False
             
-            logger.info(f"✅【杠杆工人】保证金检查通过: {margin} USDT")
+            logger.info(f"✅【半自动杠杆工人】保证金检查通过: {margin} USDT")
             return True
             
         except Exception as e:
-            logger.error(f"❌【杠杆工人】检查保证金失败: {e}")
+            logger.error(f"❌【半自动杠杆工人】检查保证金失败: {e}")
             return False
     
     def _fill_params(self):
@@ -145,7 +145,7 @@ class LeverageWorker:
         self.binance_cache['params']['symbol'] = symbol
         self.binance_cache['params']['leverage'] = leverage
         
-        logger.info(f"📝【杠杆工人】参数已填充: 欧易={okx_symbol} x{leverage}, 币安={symbol} x{leverage}")
+        logger.info(f"📝【半自动杠杆工人】参数已填充: 欧易={okx_symbol} x{leverage}, 币安={symbol} x{leverage}")
     
     def _convert_okx_symbol(self, symbol: str) -> str:
         """转换欧易合约名：BTCUSDT → BTC-USDT-SWAP"""
@@ -168,7 +168,7 @@ class LeverageWorker:
         
         if orders and self.brain.trader:
             self.brain.trader.send_orders(orders)
-            logger.info(f"📤【杠杆工人】已推送 {len(orders)} 个订单给下单工人")
+            logger.info(f"📤【半自动杠杆工人】已推送 {len(orders)} 个订单给下单工人")
     
     def _cleanup(self):
         """清空缓存"""
@@ -176,5 +176,5 @@ class LeverageWorker:
         self.pending_params = None
         self.okx_cache = None
         self.binance_cache = None
-        logger.info("🧹【杠杆工人】缓存已清空")
+        logger.info("🧹【半自动杠杆工人】缓存已清空")
         

@@ -1,6 +1,6 @@
 # trading/semi_auto/close_position_worker.py
 """
-平仓工人 - 独立负责平仓
+半自动清仓工人 - 独立负责平仓
 
 工作流程：
 1. 收到平仓指令 → 缓存，开始工作
@@ -46,12 +46,12 @@ class ClosePositionWorker:
         # 防重入标志
         self._is_executing = False
         
-        logger.info("🔧【平仓工人】初始化完成")
+        logger.info("🔧【半自动清仓工人】初始化完成")
     
     def on_data(self, data: Dict[str, Any]):
         """接收大脑推送的数据"""
         if data.get("type") == "close_position":
-            logger.info("📥【平仓工人】收到平仓指令")
+            logger.info("📥【半自动清仓工人】收到平仓指令")
             # 新指令覆盖旧的
             self._cleanup()
             self.pending_command = data
@@ -70,7 +70,7 @@ class ClosePositionWorker:
     async def _execute(self):
         """执行平仓流程"""
         try:
-            logger.info("🔧【平仓工人】开始执行")
+            logger.info("🔧【半自动清仓工人】开始执行")
             
             # 1. 提取指令参数
             if not self._extract_command_params():
@@ -97,10 +97,10 @@ class ClosePositionWorker:
             # 7. 清理
             self._cleanup()
             
-            logger.info("✅【平仓工人】完成")
+            logger.info("✅【半自动清仓工人】完成")
             
         except Exception as e:
-            logger.error(f"❌【平仓工人】执行异常: {e}")
+            logger.error(f"❌【半自动清仓工人】执行异常: {e}")
             self._cleanup()
         finally:
             self._is_executing = False
@@ -118,21 +118,21 @@ class ClosePositionWorker:
             self.binance_symbol = binance_data.get("symbol")
             
             if not self.okx_symbol or not self.binance_symbol:
-                logger.error("❌【平仓工人】合约名缺失")
+                logger.error("❌【半自动清仓工人】合约名缺失")
                 return False
             
-            logger.info(f"📋【平仓工人】指令参数: 欧易={self.okx_symbol}, 币安={self.binance_symbol}")
+            logger.info(f"📋【半自动清仓工人】指令参数: 欧易={self.okx_symbol}, 币安={self.binance_symbol}")
             return True
             
         except Exception as e:
-            logger.error(f"❌【平仓工人】提取指令参数失败: {e}")
+            logger.error(f"❌【半自动清仓工人】提取指令参数失败: {e}")
             return False
     
     def _init_cache(self):
         """拷贝模板到缓存"""
         self.okx_cache = copy.deepcopy(CLOSE_POSITION_OKX)
         self.binance_cache = copy.deepcopy(CLOSE_POSITION_BINANCE)
-        logger.info("📦【平仓工人】模板已拷贝")
+        logger.info("📦【半自动清仓工人】模板已拷贝")
     
     def _fill_symbols(self):
         """填充合约名"""
@@ -142,7 +142,7 @@ class ClosePositionWorker:
         # 币安
         self.binance_cache["params"]["symbol"] = self.binance_symbol
         
-        logger.info(f"📝【平仓工人】合约名已填充: 欧易={self.okx_symbol}, 币安={self.binance_symbol}")
+        logger.info(f"📝【半自动清仓工人】合约名已填充: 欧易={self.okx_symbol}, 币安={self.binance_symbol}")
     
     async def _load_private_data(self) -> bool:
         """读取私人数据，重试1次"""
@@ -165,22 +165,22 @@ class ClosePositionWorker:
                 
                 # 校验
                 if not self.okx_position_side:
-                    logger.warning("⚠️【平仓工人】欧易开仓方向为空")
+                    logger.warning("⚠️【半自动清仓工人】欧易开仓方向为空")
                     continue
                 
                 if not self.binance_position_side:
-                    logger.warning("⚠️【平仓工人】币安开仓方向为空")
+                    logger.warning("⚠️【半自动清仓工人】币安开仓方向为空")
                     continue
                 
                 if self.binance_quantity <= 0:
-                    logger.warning(f"⚠️【平仓工人】币安持仓币数无效: {self.binance_quantity}")
+                    logger.warning(f"⚠️【半自动清仓工人】币安持仓币数无效: {self.binance_quantity}")
                     continue
                 
-                logger.info(f"✅【平仓工人】私人数据: 欧易方向={self.okx_position_side}, 币安方向={self.binance_position_side}, 币安持仓币数={self.binance_quantity}")
+                logger.info(f"✅【半自动清仓工人】私人数据: 欧易方向={self.okx_position_side}, 币安方向={self.binance_position_side}, 币安持仓币数={self.binance_quantity}")
                 return True
                 
             except Exception as e:
-                logger.error(f"❌【平仓工人】读取私人数据失败 (尝试 {attempt+1}/{max_attempts}): {e}")
+                logger.error(f"❌【半自动清仓工人】读取私人数据失败 (尝试 {attempt+1}/{max_attempts}): {e}")
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1)
         
@@ -205,7 +205,7 @@ class ClosePositionWorker:
         qty_formatted = f"{self.binance_quantity:.8f}".rstrip('0').rstrip('.')
         self.binance_cache["params"]["quantity"] = qty_formatted
         
-        logger.info(f"📝【平仓工人】方向已填充: 欧易={self.okx_cache['params']['posSide']}, 币安={self.binance_cache['params']}")
+        logger.info(f"📝【半自动清仓工人】方向已填充: 欧易={self.okx_cache['params']['posSide']}, 币安={self.binance_cache['params']}")
     
     def _send_to_trader(self):
         """推送给下单工人"""
@@ -217,7 +217,7 @@ class ClosePositionWorker:
         
         if orders and self.brain.trader:
             self.brain.trader.send_orders(orders)
-            logger.info(f"📤【平仓工人】已推送 {len(orders)} 个订单给下单工人")
+            logger.info(f"📤【半自动清仓工人】已推送 {len(orders)} 个订单给下单工人")
     
     def _cleanup(self):
         """清空所有缓存"""
@@ -232,4 +232,4 @@ class ClosePositionWorker:
         self.binance_position_side = ""
         self.binance_quantity = 0.0
         
-        logger.info("🧹【平仓工人】缓存已清空")
+        logger.info("🧹【半自动清仓工人】缓存已清空")

@@ -1,5 +1,5 @@
 """
-开仓工人 - 独立负责开仓参数计算和发送
+半自动开仓工人 - 独立负责开仓参数计算和发送
 
 工作流程：
 1. 收到开仓指令 → 缓存，启动60秒超时
@@ -56,13 +56,13 @@ class OpenPositionWorker:
         # 防重入标志
         self._is_executing = False
         
-        logger.info("🔧【开仓工人】初始化完成")
+        logger.info("🔧【半自动开仓工人】初始化完成")
     
     def on_data(self, data: Dict[str, Any]):
         """接收大脑推送的数据"""
         # 开仓指令
         if data.get("command") == "place_order":
-            logger.info("📥【开仓工人】收到开仓指令")
+            logger.info("📥【半自动开仓工人】收到开仓指令")
             # 新指令覆盖旧的
             self._cleanup()
             self.pending_params = data.get("params", {})
@@ -71,7 +71,7 @@ class OpenPositionWorker:
         # 信息标签
         elif "info" in data:
             info = data["info"]
-            logger.info(f"📥【开仓工人】收到信息标签: {info}")
+            logger.info(f"📥【半自动开仓工人】收到信息标签: {info}")
             
             if info == "欧易杠杆设置成功":
                 self.okx_lever_ok = True
@@ -84,7 +84,7 @@ class OpenPositionWorker:
     def _check_and_execute(self):
         """检查三个条件是否齐了，齐了就执行（只触发一次）"""
         if not self._is_executing and self.pending_params and self.okx_lever_ok and self.binance_lever_ok:
-            logger.info("🎯【开仓工人】三个条件已齐，开始执行开仓流程")
+            logger.info("🎯【半自动开仓工人】三个条件已齐，开始执行开仓流程")
             self._is_executing = True
             self._cancel_timeout()
             asyncio.create_task(self._execute())
@@ -94,13 +94,13 @@ class OpenPositionWorker:
         if self.timeout_task:
             self.timeout_task.cancel()
         self.timeout_task = asyncio.create_task(self._timeout_handler())
-        logger.info("⏰【开仓工人】启动60秒超时")
+        logger.info("⏰【半自动开仓工人】启动60秒超时")
     
     async def _timeout_handler(self):
         """超时处理：60秒内没收到全部条件，清空所有缓存"""
         await asyncio.sleep(60)
         if self.pending_params:
-            logger.warning("⏰【开仓工人】等待超时（60秒），自动清空缓存，结束流程")
+            logger.warning("⏰【半自动开仓工人】等待超时（60秒），自动清空缓存，结束流程")
             self._cleanup()
     
     def _cancel_timeout(self):
@@ -108,7 +108,7 @@ class OpenPositionWorker:
         if self.timeout_task:
             self.timeout_task.cancel()
             self.timeout_task = None
-            logger.info("✅【开仓工人】超时任务已取消")
+            logger.info("✅【半自动开仓工人】超时任务已取消")
     
     async def _execute(self):
         """执行开仓流程（干活流程）"""
@@ -118,16 +118,16 @@ class OpenPositionWorker:
             self.binance_lever_ok = False
             
             if not self.pending_params:
-                logger.error("❌【开仓工人】没有开仓参数")
+                logger.error("❌【半自动开仓工人】没有开仓参数")
                 self._cleanup()
                 return
             
-            logger.info("🔧【开仓工人】开始执行")
+            logger.info("🔧【半自动开仓工人】开始执行")
             
             # 1. 拷贝模板
             self.okx_cache = copy.deepcopy(OPEN_MARKET_OKX)
             self.binance_cache = copy.deepcopy(OPEN_MARKET_BINANCE)
-            logger.info("📦【开仓工人】模板已拷贝")
+            logger.info("📦【半自动开仓工人】模板已拷贝")
             
             # 2. 读取行情数据
             if not await self._load_market_data():
@@ -161,7 +161,7 @@ class OpenPositionWorker:
             # 9. 清理
             self._cleanup()
             
-            logger.info("✅【开仓工人】完成")
+            logger.info("✅【半自动开仓工人】完成")
         finally:
             self._is_executing = False
     
@@ -177,7 +177,7 @@ class OpenPositionWorker:
                 
                 symbol_data = market_data.get(symbol)
                 if not symbol_data:
-                    logger.warning(f"⚠️【开仓工人】未找到合约 {symbol} 的行情数据")
+                    logger.warning(f"⚠️【半自动开仓工人】未找到合约 {symbol} 的行情数据")
                     continue
                 
                 okx_price = symbol_data.get('okx_trade_price', '0')
@@ -187,14 +187,14 @@ class OpenPositionWorker:
                 self.binance_trade_price = float(binance_price)
                 
                 if self.okx_trade_price <= 0 or self.binance_trade_price <= 0:
-                    logger.warning(f"⚠️【开仓工人】价格异常: 欧易={self.okx_trade_price}, 币安={self.binance_trade_price}")
+                    logger.warning(f"⚠️【半自动开仓工人】价格异常: 欧易={self.okx_trade_price}, 币安={self.binance_trade_price}")
                     continue
                 
-                logger.info(f"✅【开仓工人】行情数据: 欧易={self.okx_trade_price}, 币安={self.binance_trade_price}")
+                logger.info(f"✅【半自动开仓工人】行情数据: 欧易={self.okx_trade_price}, 币安={self.binance_trade_price}")
                 return True
                 
             except Exception as e:
-                logger.error(f"❌【开仓工人】读取行情数据失败 (尝试 {attempt+1}/{max_attempts}): {e}")
+                logger.error(f"❌【半自动开仓工人】读取行情数据失败 (尝试 {attempt+1}/{max_attempts}): {e}")
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1)
         
@@ -218,16 +218,16 @@ class OpenPositionWorker:
                         self.minSz = float(contract.get('minSz', 0))
                         
                         if self.ctVal <= 0 or self.lotSz <= 0 or self.minSz <= 0:
-                            logger.warning(f"⚠️【开仓工人】欧易面值异常: ctVal={self.ctVal}, lotSz={self.lotSz}, minSz={self.minSz}")
+                            logger.warning(f"⚠️【半自动开仓工人】欧易面值异常: ctVal={self.ctVal}, lotSz={self.lotSz}, minSz={self.minSz}")
                             continue
                         
-                        logger.info(f"✅【开仓工人】欧易面值: ctVal={self.ctVal}, lotSz={self.lotSz}, minSz={self.minSz}")
+                        logger.info(f"✅【半自动开仓工人】欧易面值: ctVal={self.ctVal}, lotSz={self.lotSz}, minSz={self.minSz}")
                         return True
                 
-                logger.warning(f"⚠️【开仓工人】未找到欧易合约 {okx_symbol} 的面值数据")
+                logger.warning(f"⚠️【半自动开仓工人】未找到欧易合约 {okx_symbol} 的面值数据")
                 
             except Exception as e:
-                logger.error(f"❌【开仓工人】读取欧易面值失败 (尝试 {attempt+1}/{max_attempts}): {e}")
+                logger.error(f"❌【半自动开仓工人】读取欧易面值失败 (尝试 {attempt+1}/{max_attempts}): {e}")
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1)
         
@@ -249,16 +249,16 @@ class OpenPositionWorker:
                         self.minQty = float(contract.get('minQty', 0))
                         
                         if self.stepSize <= 0 or self.minQty <= 0:
-                            logger.warning(f"⚠️【开仓工人】币安精度异常: stepSize={self.stepSize}, minQty={self.minQty}")
+                            logger.warning(f"⚠️【半自动开仓工人】币安精度异常: stepSize={self.stepSize}, minQty={self.minQty}")
                             continue
                         
-                        logger.info(f"✅【开仓工人】币安精度: stepSize={self.stepSize}, minQty={self.minQty}")
+                        logger.info(f"✅【半自动开仓工人】币安精度: stepSize={self.stepSize}, minQty={self.minQty}")
                         return True
                 
-                logger.warning(f"⚠️【开仓工人】未找到币安合约 {symbol} 的精度数据")
+                logger.warning(f"⚠️【半自动开仓工人】未找到币安合约 {symbol} 的精度数据")
                 
             except Exception as e:
-                logger.error(f"❌【开仓工人】读取币安精度失败 (尝试 {attempt+1}/{max_attempts}): {e}")
+                logger.error(f"❌【半自动开仓工人】读取币安精度失败 (尝试 {attempt+1}/{max_attempts}): {e}")
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1)
         
@@ -278,7 +278,7 @@ class OpenPositionWorker:
             self.sz = floor_sz * self.lotSz
             
             if self.sz < self.minSz:
-                logger.warning(f"⚠️【开仓工人】欧易张数 {self.sz} 小于最小下单量 {self.minSz}")
+                logger.warning(f"⚠️【半自动开仓工人】欧易张数 {self.sz} 小于最小下单量 {self.minSz}")
                 return False
             
             # 计算币安币数
@@ -289,14 +289,14 @@ class OpenPositionWorker:
             self.quantity = floor_quantity * self.stepSize
             
             if self.quantity < self.minQty:
-                logger.warning(f"⚠️【开仓工人】币安币数 {self.quantity} 小于最小下单量 {self.minQty}")
+                logger.warning(f"⚠️【半自动开仓工人】币安币数 {self.quantity} 小于最小下单量 {self.minQty}")
                 return False
             
-            logger.info(f"✅【开仓工人】计算完成: sz={self.sz}, quantity={self.quantity}")
+            logger.info(f"✅【半自动开仓工人】计算完成: sz={self.sz}, quantity={self.quantity}")
             return True
             
         except Exception as e:
-            logger.error(f"❌【开仓工人】计算参数失败: {e}")
+            logger.error(f"❌【半自动开仓工人】计算参数失败: {e}")
             return False
     
     def _fill_direction(self):
@@ -309,7 +309,7 @@ class OpenPositionWorker:
             self.okx_cache['params']['posSide'] = "short"
             self.binance_cache['params']['side'] = "BUY"
             self.binance_cache['params']['positionSide'] = "LONG"
-            logger.info("📝【开仓工人】方向: 欧易做空, 币安做多")
+            logger.info("📝【半自动开仓工人】方向: 欧易做空, 币安做多")
             
         elif direction == "long_okx_short_binance":
             # 做多欧易，做空币安
@@ -317,10 +317,10 @@ class OpenPositionWorker:
             self.okx_cache['params']['posSide'] = "long"
             self.binance_cache['params']['side'] = "SELL"
             self.binance_cache['params']['positionSide'] = "SHORT"
-            logger.info("📝【开仓工人】方向: 欧易做多, 币安做空")
+            logger.info("📝【半自动开仓工人】方向: 欧易做多, 币安做空")
         
         else:
-            logger.error(f"❌【开仓工人】未知方向: {direction}")
+            logger.error(f"❌【半自动开仓工人】未知方向: {direction}")
     
     def _convert_to_string(self):
         """所有字段转字符串"""
@@ -356,7 +356,7 @@ class OpenPositionWorker:
         
         if orders and self.brain.trader:
             self.brain.trader.send_orders(orders)
-            logger.info(f"📤【开仓工人】已推送 {len(orders)} 个订单给下单工人")
+            logger.info(f"📤【半自动开仓工人】已推送 {len(orders)} 个订单给下单工人")
     
     def _cleanup(self):
         """清空所有缓存"""
@@ -386,4 +386,4 @@ class OpenPositionWorker:
         # 重置执行标志
         self._is_executing = False
         
-        logger.info("🧹【开仓工人】缓存已清空")
+        logger.info("🧹【半自动开仓工人】缓存已清空")

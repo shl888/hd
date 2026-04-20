@@ -1,6 +1,6 @@
 # trading/semi_auto/sl_tp_worker.py
 """
-止损止盈工人 - 独立负责设置止损止盈
+半自动止损止盈工人 - 独立负责设置止损止盈
 
 工作流程：
 1. 收到止损止盈指令 → 缓存，开始工作
@@ -64,12 +64,12 @@ class SlTpWorker:
         # 防重入标志
         self._is_executing = False
         
-        logger.info("🔧【止损止盈工人】初始化完成")
+        logger.info("🔧【半自动止损止盈工人】初始化完成")
     
     def on_data(self, data: Dict[str, Any]):
         """接收大脑推送的数据"""
         if data.get("type") == "set_sl_tp":
-            logger.info("📥【止损止盈工人】收到止损止盈指令")
+            logger.info("📥【半自动止损止盈工人】收到止损止盈指令")
             # 新指令覆盖旧的
             self._cleanup()
             self.pending_command = data
@@ -88,7 +88,7 @@ class SlTpWorker:
     async def _execute(self):
         """执行止损止盈设置流程"""
         try:
-            logger.info("🔧【止损止盈工人】开始执行")
+            logger.info("🔧【半自动止损止盈工人】开始执行")
             
             # 1. 提取指令参数
             if not self._extract_command_params():
@@ -133,10 +133,10 @@ class SlTpWorker:
             # 11. 清理
             self._cleanup()
             
-            logger.info("✅【止损止盈工人】完成")
+            logger.info("✅【半自动止损止盈工人】完成")
             
         except Exception as e:
-            logger.error(f"❌【止损止盈工人】执行异常: {e}")
+            logger.error(f"❌【半自动止损止盈工人】执行异常: {e}")
             self._cleanup()
         finally:
             self._is_executing = False
@@ -154,25 +154,25 @@ class SlTpWorker:
             self.binance_symbol = binance_data.get("symbol")
             
             if not self.okx_symbol or not self.binance_symbol:
-                logger.error("❌【止损止盈工人】合约名缺失")
+                logger.error("❌【半自动止损止盈工人】合约名缺失")
                 return False
             
             # 提取幅度
             self.stop_loss_percent = float(data.get("stop_loss_percent", 0))
             self.take_profit_percent = float(data.get("take_profit_percent", 0))
             
-            logger.info(f"📋【止损止盈工人】指令参数: 欧易={self.okx_symbol}, 币安={self.binance_symbol}, 止损={self.stop_loss_percent}%, 止盈={self.take_profit_percent}%")
+            logger.info(f"📋【半自动止损止盈工人】指令参数: 欧易={self.okx_symbol}, 币安={self.binance_symbol}, 止损={self.stop_loss_percent}%, 止盈={self.take_profit_percent}%")
             return True
             
         except Exception as e:
-            logger.error(f"❌【止损止盈工人】提取指令参数失败: {e}")
+            logger.error(f"❌【半自动止损止盈工人】提取指令参数失败: {e}")
             return False
     
     def _init_cache(self):
         """拷贝模板到缓存"""
         self.okx_cache = copy.deepcopy(OCO_OKX)
         self.binance_cache = copy.deepcopy(OCO_BINANCE)
-        logger.info("📦【止损止盈工人】模板已拷贝")
+        logger.info("📦【半自动止损止盈工人】模板已拷贝")
     
     def _fill_symbols(self):
         """填充合约名"""
@@ -183,7 +183,7 @@ class SlTpWorker:
         self.binance_cache["orders"][0]["symbol"] = self.binance_symbol
         self.binance_cache["orders"][1]["symbol"] = self.binance_symbol
         
-        logger.info(f"📝【止损止盈工人】合约名已填充: 欧易={self.okx_symbol}, 币安={self.binance_symbol}")
+        logger.info(f"📝【半自动止损止盈工人】合约名已填充: 欧易={self.okx_symbol}, 币安={self.binance_symbol}")
     
     async def _load_private_data(self) -> bool:
         """读取私人数据，重试1次"""
@@ -207,27 +207,27 @@ class SlTpWorker:
                 
                 # 校验
                 if self.okx_open_price <= 0:
-                    logger.warning(f"⚠️【止损止盈工人】欧易开仓价无效: {self.okx_open_price}")
+                    logger.warning(f"⚠️【半自动止损止盈工人】欧易开仓价无效: {self.okx_open_price}")
                     continue
                 
                 if not self.okx_position_side:
-                    logger.warning("⚠️【止损止盈工人】欧易开仓方向为空")
+                    logger.warning("⚠️【半自动止损止盈工人】欧易开仓方向为空")
                     continue
                 
                 if self.binance_open_price <= 0:
-                    logger.warning(f"⚠️【止损止盈工人】币安开仓价无效: {self.binance_open_price}")
+                    logger.warning(f"⚠️【半自动止损止盈工人】币安开仓价无效: {self.binance_open_price}")
                     continue
                 
                 if not self.binance_position_side:
-                    logger.warning("⚠️【止损止盈工人】币安开仓方向为空")
+                    logger.warning("⚠️【半自动止损止盈工人】币安开仓方向为空")
                     continue
                 
-                logger.info(f"✅【止损止盈工人】私人数据: 欧易开仓价={self.okx_open_price}, 方向={self.okx_position_side}")
-                logger.info(f"✅【止损止盈工人】私人数据: 币安开仓价={self.binance_open_price}, 方向={self.binance_position_side}")
+                logger.info(f"✅【半自动止损止盈工人】私人数据: 欧易开仓价={self.okx_open_price}, 方向={self.okx_position_side}")
+                logger.info(f"✅【半自动止损止盈工人】私人数据: 币安开仓价={self.binance_open_price}, 方向={self.binance_position_side}")
                 return True
                 
             except Exception as e:
-                logger.error(f"❌【止损止盈工人】读取私人数据失败 (尝试 {attempt+1}/{max_attempts}): {e}")
+                logger.error(f"❌【半自动止损止盈工人】读取私人数据失败 (尝试 {attempt+1}/{max_attempts}): {e}")
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1)
         
@@ -247,16 +247,16 @@ class SlTpWorker:
                         self.okx_tick_sz = float(contract.get("tickSz", 0))
                         
                         if self.okx_tick_sz <= 0:
-                            logger.warning(f"⚠️【止损止盈工人】欧易tickSz无效: {self.okx_tick_sz}")
+                            logger.warning(f"⚠️【半自动止损止盈工人】欧易tickSz无效: {self.okx_tick_sz}")
                             continue
                         
-                        logger.info(f"✅【止损止盈工人】欧易tickSz={self.okx_tick_sz}")
+                        logger.info(f"✅【半自动止损止盈工人】欧易tickSz={self.okx_tick_sz}")
                         return True
                 
-                logger.warning(f"⚠️【止损止盈工人】未找到欧易合约 {self.okx_symbol} 的面值数据")
+                logger.warning(f"⚠️【半自动止损止盈工人】未找到欧易合约 {self.okx_symbol} 的面值数据")
                 
             except Exception as e:
-                logger.error(f"❌【止损止盈工人】读取欧易tickSz失败 (尝试 {attempt+1}/{max_attempts}): {e}")
+                logger.error(f"❌【半自动止损止盈工人】读取欧易tickSz失败 (尝试 {attempt+1}/{max_attempts}): {e}")
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1)
         
@@ -276,16 +276,16 @@ class SlTpWorker:
                         self.binance_tick_size = float(contract.get("tickSize", 0))
                         
                         if self.binance_tick_size <= 0:
-                            logger.warning(f"⚠️【止损止盈工人】币安tickSize无效: {self.binance_tick_size}")
+                            logger.warning(f"⚠️【半自动止损止盈工人】币安tickSize无效: {self.binance_tick_size}")
                             continue
                         
-                        logger.info(f"✅【止损止盈工人】币安tickSize={self.binance_tick_size}")
+                        logger.info(f"✅【半自动止损止盈工人】币安tickSize={self.binance_tick_size}")
                         return True
                 
-                logger.warning(f"⚠️【止损止盈工人】未找到币安合约 {self.binance_symbol} 的精度数据")
+                logger.warning(f"⚠️【半自动止损止盈工人】未找到币安合约 {self.binance_symbol} 的精度数据")
                 
             except Exception as e:
-                logger.error(f"❌【止损止盈工人】读取币安tickSize失败 (尝试 {attempt+1}/{max_attempts}): {e}")
+                logger.error(f"❌【半自动止损止盈工人】读取币安tickSize失败 (尝试 {attempt+1}/{max_attempts}): {e}")
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1)
         
@@ -303,33 +303,33 @@ class SlTpWorker:
                 # 做多：止损=开仓价×(1-止损%)，止盈=开仓价×(1+止盈%)
                 self.okx_stop_price = self.okx_open_price * (1 - sl_abs)
                 self.okx_take_price = self.okx_open_price * (1 + tp)
-                logger.info(f"📊【止损止盈工人】欧易做多: 止损价={self.okx_stop_price}, 止盈价={self.okx_take_price}")
+                logger.info(f"📊【半自动止损止盈工人】欧易做多: 止损价={self.okx_stop_price}, 止盈价={self.okx_take_price}")
             elif self.okx_position_side == "short":
                 # 做空：止损=开仓价×(1+止损%)，止盈=开仓价×(1-止盈%)
                 self.okx_stop_price = self.okx_open_price * (1 + sl_abs)
                 self.okx_take_price = self.okx_open_price * (1 - tp)
-                logger.info(f"📊【止损止盈工人】欧易做空: 止损价={self.okx_stop_price}, 止盈价={self.okx_take_price}")
+                logger.info(f"📊【半自动止损止盈工人】欧易做空: 止损价={self.okx_stop_price}, 止盈价={self.okx_take_price}")
             else:
-                logger.error(f"❌【止损止盈工人】未知的欧易开仓方向: {self.okx_position_side}")
+                logger.error(f"❌【半自动止损止盈工人】未知的欧易开仓方向: {self.okx_position_side}")
                 return False
             
             # 币安计算
             if self.binance_position_side == "LONG":
                 self.binance_stop_price = self.binance_open_price * (1 - sl_abs)
                 self.binance_take_price = self.binance_open_price * (1 + tp)
-                logger.info(f"📊【止损止盈工人】币安做多: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
+                logger.info(f"📊【半自动止损止盈工人】币安做多: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
             elif self.binance_position_side == "SHORT":
                 self.binance_stop_price = self.binance_open_price * (1 + sl_abs)
                 self.binance_take_price = self.binance_open_price * (1 - tp)
-                logger.info(f"📊【止损止盈工人】币安做空: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
+                logger.info(f"📊【半自动止损止盈工人】币安做空: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
             else:
-                logger.error(f"❌【止损止盈工人】未知的币安开仓方向: {self.binance_position_side}")
+                logger.error(f"❌【半自动止损止盈工人】未知的币安开仓方向: {self.binance_position_side}")
                 return False
             
             return True
             
         except Exception as e:
-            logger.error(f"❌【止损止盈工人】计算价格失败: {e}")
+            logger.error(f"❌【半自动止损止盈工人】计算价格失败: {e}")
             return False
     
     def _format_prices(self):
@@ -337,12 +337,12 @@ class SlTpWorker:
         # 欧易格式化
         self.okx_stop_price = self._round_and_format(self.okx_stop_price, self.okx_tick_sz)
         self.okx_take_price = self._round_and_format(self.okx_take_price, self.okx_tick_sz)
-        logger.info(f"🎯【止损止盈工人】欧易精度化后: 止损={self.okx_stop_price}, 止盈={self.okx_take_price}")
+        logger.info(f"🎯【半自动止损止盈工人】欧易精度化后: 止损={self.okx_stop_price}, 止盈={self.okx_take_price}")
         
         # 币安格式化
         self.binance_stop_price = self._round_and_format(self.binance_stop_price, self.binance_tick_size)
         self.binance_take_price = self._round_and_format(self.binance_take_price, self.binance_tick_size)
-        logger.info(f"🎯【止损止盈工人】币安精度化后: 止损={self.binance_stop_price}, 止盈={self.binance_take_price}")
+        logger.info(f"🎯【半自动止损止盈工人】币安精度化后: 止损={self.binance_stop_price}, 止盈={self.binance_take_price}")
     
     def _round_and_format(self, price: float, tick: float) -> str:
         """
@@ -389,7 +389,7 @@ class SlTpWorker:
         self.okx_cache["params"]["slTriggerPx"] = self.okx_stop_price
         self.okx_cache["params"]["tpTriggerPx"] = self.okx_take_price
         
-        logger.info(f"📝【止损止盈工人】欧易参数已填充: side={self.okx_cache['params']['side']}, posSide={self.okx_cache['params']['posSide']}")
+        logger.info(f"📝【半自动止损止盈工人】欧易参数已填充: side={self.okx_cache['params']['side']}, posSide={self.okx_cache['params']['posSide']}")
         
         # ========== 币安参数 ==========
         # 止损单（索引0）
@@ -408,7 +408,7 @@ class SlTpWorker:
             self.binance_cache["orders"][0]["side"] = "BUY"
             self.binance_cache["orders"][1]["side"] = "BUY"
         
-        logger.info(f"📝【止损止盈工人】币安参数已填充: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
+        logger.info(f"📝【半自动止损止盈工人】币安参数已填充: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
     
     def _send_to_trader(self):
         """推送给下单工人"""
@@ -420,7 +420,7 @@ class SlTpWorker:
         
         if orders and self.brain.trader:
             self.brain.trader.send_orders(orders)
-            logger.info(f"📤【止损止盈工人】已推送 {len(orders)} 个订单给下单工人")
+            logger.info(f"📤【半自动止损止盈工人】已推送 {len(orders)} 个订单给下单工人")
     
     def _cleanup(self):
         """清空所有缓存"""
@@ -447,4 +447,4 @@ class SlTpWorker:
         self.binance_stop_price = 0.0
         self.binance_take_price = 0.0
         
-        logger.info("🧹【止损止盈工人】缓存已清空")
+        logger.info("🧹【半自动止损止盈工人】缓存已清空")

@@ -6,7 +6,7 @@
 - leverage_worker: 杠杆工人
 - open_position_worker: 开仓工人
 - sl_tp_worker: 止损止盈工人
-- close_position_worker: 平仓工人
+- close_position_worker: 清仓工人
 
 大脑收到指令后，转发给对应的工人。
 """
