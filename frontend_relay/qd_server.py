@@ -236,6 +236,16 @@ class FrontendRelayServer:
                                                 logger.info(f"✅【客户端】统计指令已转发给 StatsHandler")
                                                 # ========== 统计指令处理结束 ==========
                                             
+                                            # ========== 🆕 新增：信息标签处理（修复缩进：与上面的 elif 平级） ==========
+                                            elif 'info' in data2:
+                                                logger.debug(f"🏷️【客户端】收到信息标签: {data2.get('info')}")
+                                                if hasattr(self.brain, 'tag_dispatcher') and self.brain.tag_dispatcher:
+                                                    await self.brain.tag_dispatcher.receive(data2)
+                                                    logger.info(f"📤【客户端】信息标签已转发给标签调度器: {data2.get('info')}")
+                                                else:
+                                                    logger.warning(f"⚠️【客户端】标签调度器未初始化，标签丢弃: {data2.get('info')}")
+                                            # ========== 信息标签处理结束 ==========
+                                            
                                             else:
                                                 logger.debug(f"📨【客户端】收到未知消息类型: {msg_type}，客户端: {client_id}")
                                                 
