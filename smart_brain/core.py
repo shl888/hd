@@ -153,7 +153,9 @@ class SmartBrain:
             self.tag_dispatcher = TagDispatcher(
                 open_worker=self.open_worker,
                 funding_sltp=self.funding_sltp,
-                spread_sltp=self.spread_sltp
+                funding_close=self.funding_close,      # 加这行
+                spread_sltp=self.spread_sltp,
+                spread_close=self.spread_close         # 加这行
             )
             logger.info("✅【智能大脑】标签调度器已创建")
             
