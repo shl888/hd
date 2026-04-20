@@ -70,12 +70,12 @@ class SmartBrain:
         self.close_worker = None         # 平仓
         
         # ========== 全自动工人 - 资金费套利 ==========
-        self.funding_open = None         # 侦察兵，检测开仓条件
+        self.funding_open = None         # 开仓，检测开仓条件
         self.funding_sltp = None         # 止损止盈
         self.funding_close = None        # 持续监控清仓
         
         # ========== 全自动工人 - 价差套利 ==========
-        self.spread_open = None          # 侦察兵，检测开仓条件
+        self.spread_open = None          # 开仓，检测开仓条件
         self.spread_sltp = None          # 止损止盈
         self.spread_close = None         # 持续监控清仓
         
@@ -138,7 +138,7 @@ class SmartBrain:
             self.funding_open = FundingOpen(self)
             self.funding_sltp = FundingSlTp(self)
             self.funding_close = FundingClose(self)
-            logger.info("✅【智能大脑】资金费套利工人已创建（侦察兵、止损止盈、清仓）")
+            logger.info("✅【智能大脑】资金费套利工人已创建（开仓、止损止盈、清仓）")
             
             # 4. 创建全自动工人 - 价差套利
             from .trading.full_auto.spread import SpreadOpen, SpreadClose, SpreadSlTp
@@ -146,7 +146,7 @@ class SmartBrain:
             self.spread_open = SpreadOpen(self)
             self.spread_sltp = SpreadSlTp(self)
             self.spread_close = SpreadClose(self)
-            logger.info("✅【智能大脑】价差套利工人已创建（侦察兵、止损止盈、清仓）")
+            logger.info("✅【智能大脑】价差套利工人已创建（开仓、止损止盈、清仓）")
             
             # 5. 创建标签调度器
             from .tag_dispatcher import TagDispatcher
