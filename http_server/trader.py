@@ -9,6 +9,7 @@
    - 执行结果数据发给大脑
    - 标签发给标签调度器
 4. 空闲时：歇着 / 定时校准币安时间
+5. 处理完开仓订单后，自动清理残留的止损止盈单
 
 数据流向：
 - 大脑 → 下单工人：订单参数（send_orders）
@@ -144,6 +145,9 @@ class Trader:
             
             logger.info(f"✅【下单工人】处理完成，共 {len(results)} 个结果已发送")
             
+            # 🆕 执行清理残留止损单（无论开仓成功与否）
+            await self._cleanup_algo_orders(creds_map)
+            
         except Exception as e:
             logger.error(f"❌【下单工人】处理订单异常: {e}")
             await self._send_error_to_brain(f"工人处理异常: {str(e)}")
@@ -227,6 +231,79 @@ class Trader:
                     return {"info": "币安开仓成功"}
         
         return None
+    
+    # ========== 🆕 清理残留止损单 ==========
+    
+    async def _cleanup_algo_orders(self, creds_map: Dict[str, Dict]):
+        """清理残留的止损止盈单（无论开仓成功与否都执行）"""
+        try:
+            # 欧易清理
+            okx_creds = creds_map.get("okx")
+            if okx_creds:
+                await self._cleanup_okx_algo_orders(okx_creds)
+            
+            # 币安清理
+            binance_creds = creds_map.get("binance")
+            if binance_creds:
+                await self._cleanup_binance_open_orders(binance_creds)
+                
+        except Exception as e:
+            logger.warning(f"⚠️【下单工人】清理残留单异常（可忽略）: {e}")
+    
+    async def _cleanup_okx_algo_orders(self, creds: Dict):
+        """清理欧易残留的止盈止损单"""
+        try:
+            # 1. 查询所有未完成的策略委托
+            pending = await self._okx_http_request(
+                creds.get("api_key"),
+                creds.get("api_secret"),
+                creds.get("passphrase", ""),
+                "GET",
+                "/api/v5/trade/orders-algo-pending",
+                {"instType": "SWAP"}
+            )
+            
+            orders = pending.get('data', [])
+            if not orders:
+                logger.info("🧹【下单工人】欧易无残留止损单")
+                return
+            
+            # 2. 提取所有 algoId
+            algo_ids = [order['algoId'] for order in orders if order.get('algoId')]
+            
+            if not algo_ids:
+                return
+            
+            # 3. 批量撤销
+            await self._okx_http_request(
+                creds.get("api_key"),
+                creds.get("api_secret"),
+                creds.get("passphrase", ""),
+                "POST",
+                "/api/v5/trade/cancel-advance-algos",
+                {"algoIds": algo_ids}
+            )
+            
+            logger.info(f"🧹【下单工人】欧易已清理 {len(algo_ids)} 个残留止损单")
+            
+        except Exception as e:
+            logger.warning(f"⚠️【下单工人】欧易清理残留单失败（可忽略）: {e}")
+    
+    async def _cleanup_binance_open_orders(self, creds: Dict):
+        """清理币安残留的条件单"""
+        try:
+            # 币安全清所有条件单（当前空仓，所有条件单都是残留的）
+            await self._binance_http_request(
+                creds.get("api_key"),
+                creds.get("api_secret"),
+                "DELETE",
+                "/fapi/v1/allOpenOrders",
+                {}
+            )
+            logger.info("🧹【下单工人】币安已清理残留条件单")
+            
+        except Exception as e:
+            logger.warning(f"⚠️【下单工人】币安清理残留单失败（可忽略）: {e}")
     
     # ========== 币安 OCO 展开 ==========
     
@@ -426,6 +503,9 @@ class Trader:
             import requests
             if method == "POST":
                 return requests.post(url, data=final_query_string, headers=headers)
+            elif method == "DELETE":
+                full_url = f"{url}?{final_query_string}"
+                return requests.delete(full_url, headers=headers)
             else:
                 # GET 请求：把 final_query_string 拼到 URL
                 full_url = f"{url}?{final_query_string}"
@@ -523,7 +603,7 @@ class Trader:
         base_url = self._okx_get_base_url()
         
         timestamp = self._okx_get_timestamp()
-        body = json.dumps(params)
+        body = json.dumps(params) if params else ""
         sign_str = timestamp + method + endpoint + body
         signature = base64.b64encode(
             hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).digest()
@@ -547,8 +627,10 @@ class Trader:
             import requests
             if method == "POST":
                 return requests.post(url, data=body, headers=headers)
-            else:
+            elif method == "GET":
                 return requests.get(url, params=params, headers=headers)
+            else:
+                return requests.request(method, url, params=params, headers=headers)
         
         response = await loop.run_in_executor(self._executor, _request)
         
