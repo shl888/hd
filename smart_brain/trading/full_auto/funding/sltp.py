@@ -5,19 +5,20 @@
 工作流程：
 1. 被动接收大脑推送的数据
 2. 收到标签 {"info": "开启全自动"} → 缓存
-3. 收到标签 {"info": "欧易开仓成功"} → 缓存
-4. 收到标签 {"info": "币安开仓成功"} → 缓存
-5. 每次收到数据后检查三个标签是否齐了，齐了就执行
-6. 拷贝欧易和币安的止损止盈模板
-7. 读取私人数据（开仓价、开仓方向、合约名）
-8. 读取欧易面值数据（tickSz）
-9. 读取币安精度数据（tickSize）
-10. 计算止损价和止盈价（固定 |35%|）
-11. 按精度取整并格式化
-12. 填充参数
-13. 推送给下单工人
-14. 清理开仓成功标签，保留开启全自动标签
-15. 收到标签 {"info": "结束全自动"} → 立刻重置所有状态，取消正在执行的任务
+3. 收到标签 {"info": "当前策略:资金费套利"} → 缓存
+4. 收到标签 {"info": "欧易开仓成功"} → 缓存
+5. 收到标签 {"info": "币安开仓成功"} → 缓存
+6. 每次收到数据后检查四个标签是否齐了，齐了就执行
+7. 拷贝欧易和币安的止损止盈模板
+8. 读取私人数据（开仓价、开仓方向、合约名）
+9. 读取欧易面值数据（tickSz）
+10. 读取币安精度数据（tickSize）
+11. 计算止损价和止盈价（固定 |35%|）
+12. 按精度取整并格式化
+13. 填充参数
+14. 推送给下单工人
+15. 清理开仓成功标签和策略标签，只保留开启全自动标签
+16. 收到标签 {"info": "结束全自动"} → 立刻重置所有状态，取消正在执行的任务
 """
 
 import copy
@@ -36,9 +37,10 @@ class FundingSlTp:
         self.data_manager = brain.data_manager
         
         # 标签缓存
-        self.auto_mode_active = False      # 开启全自动
-        self.okx_open_ok = False           # 欧易开仓成功
-        self.binance_open_ok = False       # 币安开仓成功
+        self.auto_mode_active = False           # 开启全自动
+        self.funding_strategy_active = False    # 当前策略:资金费套利
+        self.okx_open_ok = False                # 欧易开仓成功
+        self.binance_open_ok = False            # 币安开仓成功
         
         # 参数缓存
         self.okx_cache = None
@@ -78,6 +80,8 @@ class FundingSlTp:
         
         if info == "开启全自动":
             self.auto_mode_active = True
+        elif info == "当前策略:资金费套利":
+            self.funding_strategy_active = True
         elif info == "欧易开仓成功":
             self.okx_open_ok = True
         elif info == "币安开仓成功":
@@ -89,12 +93,15 @@ class FundingSlTp:
         self._check_and_execute()
     
     def _check_and_execute(self):
-        """检查三个标签是否齐了，齐了就执行（防重入）"""
+        """检查四个标签是否齐了，齐了就执行（防重入）"""
         if self._is_executing:
             return
         
-        if self.auto_mode_active and self.okx_open_ok and self.binance_open_ok:
-            logger.info("🎯【资金费止损止盈工人】三个标签已齐，开始执行")
+        if (self.auto_mode_active and 
+            self.funding_strategy_active and 
+            self.okx_open_ok and 
+            self.binance_open_ok):
+            logger.info("🎯【资金费止损止盈工人】四个标签已齐，开始执行")
             self._is_executing = True
             self._current_task = asyncio.create_task(self._execute())
     
@@ -392,7 +399,7 @@ class FundingSlTp:
     # ==================== 清理 ====================
     
     def _cleanup_work(self):
-        """清理本次工作缓存，保留 auto_mode_active"""
+        """清理本次工作缓存，只保留 auto_mode_active"""
         self.okx_cache = None
         self.binance_cache = None
         
@@ -412,12 +419,14 @@ class FundingSlTp:
         
         self.okx_open_ok = False
         self.binance_open_ok = False
+        self.funding_strategy_active = False  # 策略标签也清掉，确保每次开仓都需要重新发
         
-        logger.info("🧹【资金费止损止盈工人】工作缓存已清空，全自动标签保留")
+        logger.info("🧹【资金费止损止盈工人】工作缓存已清空，只保留全自动标签")
     
     def _full_cleanup(self):
         """完全重置"""
         self.auto_mode_active = False
+        self.funding_strategy_active = False
         self.okx_open_ok = False
         self.binance_open_ok = False
         
@@ -442,4 +451,3 @@ class FundingSlTp:
         self._current_task = None
         
         logger.info("🧹【资金费止损止盈工人】完全重置")
-        

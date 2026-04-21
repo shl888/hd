@@ -7,11 +7,13 @@
 - 步骤4-5（监控阶段）：循环检测清仓条件，触发后清仓并回到准备阶段
 
 工作流程：
-1. 收到标签 {"info": "开启全自动"} → 立刻启动
-2. 执行准备阶段（步骤1-3），创建平仓参数副本
-3. 进入监控阶段（步骤4-5），循环检测清仓条件
-4. 任一条件触发 → 发送副本 → 清空缓存 → 回到准备阶段
-5. 收到标签 {"info": "结束全自动"} → 立刻停止，完全重置
+1. 收到标签 {"info": "开启全自动"} → 缓存
+2. 收到标签 {"info": "当前策略:资金费套利"} → 缓存
+3. 两个标签齐了 → 立刻启动
+4. 执行准备阶段（步骤1-3），创建平仓参数副本
+5. 进入监控阶段（步骤4-5），循环检测清仓条件
+6. 任一条件触发 → 发送副本 → 清空缓存（保留全自动标签，清除策略标签）→ 回到准备阶段
+7. 收到标签 {"info": "结束全自动"} → 立刻停止，完全重置
 
 清仓条件：
 1. 孤儿单：只有一个交易所有持仓
@@ -38,8 +40,11 @@ class FundingClose:
         self.brain = brain
         self.data_manager = brain.data_manager
         
+        # 标签缓存
+        self.auto_mode_active = False           # 开启全自动
+        self.funding_strategy_active = False    # 当前策略:资金费套利
+        
         # 工作状态
-        self.is_active = False                  # 是否激活
         self.monitor_task = None                # 监控循环任务
         self.funding_timer_task = None          # 60秒倒计时任务
         self.delayed_close_task = None          # 延迟平仓任务（第55分钟）
@@ -85,16 +90,23 @@ class FundingClose:
         logger.debug(f"📥【资金费清仓工人】收到标签: {info}")
         
         if info == "开启全自动":
-            self._activate()
+            self.auto_mode_active = True
+        elif info == "当前策略:资金费套利":
+            self.funding_strategy_active = True
         elif info == "结束全自动":
             self._deactivate()
+            return
+        
+        # 两个标签都齐了，且监控任务还没启动
+        if self.auto_mode_active and self.funding_strategy_active:
+            if self.monitor_task is None:
+                self._activate()
     
     def _activate(self):
         """激活，立刻开始监控"""
-        if self.is_active:
+        if self.monitor_task is not None:
             return
         
-        self.is_active = True
         self._stop_monitor_task()
         self.monitor_task = asyncio.create_task(self._monitor_loop())
         logger.info("✅【资金费清仓工人】已激活，开始持续监控")
@@ -103,7 +115,8 @@ class FundingClose:
         """立刻停止所有工作，完全重置"""
         logger.info("🛑【资金费清仓工人】收到结束全自动标签，立刻重置")
         
-        self.is_active = False
+        self.auto_mode_active = False
+        self.funding_strategy_active = False
         self.funding_check_active = False
         
         self._stop_monitor_task()
@@ -137,7 +150,7 @@ class FundingClose:
         """持续监控循环"""
         logger.info("🔄【资金费清仓工人】监控循环启动")
         
-        while self.is_active:
+        while self.auto_mode_active and self.funding_strategy_active:
             try:
                 # ========== 准备阶段：步骤1-3（执行一次，直到成功创建副本） ==========
                 
@@ -145,7 +158,7 @@ class FundingClose:
                 self._init_close_cache()
                 
                 # 步骤2-3：循环读取数据，直到成功填充参数创建副本
-                while self.is_active:
+                while self.auto_mode_active and self.funding_strategy_active:
                     # 步骤2：读取数据
                     market_data, user_data = await self._fetch_data()
                     if market_data is None or user_data is None:
@@ -160,7 +173,7 @@ class FundingClose:
                     
                     await asyncio.sleep(1)
                 
-                if not self.is_active:
+                if not self.auto_mode_active or not self.funding_strategy_active:
                     break
                 
                 # ========== 监控阶段：步骤4-5（循环检测，直到触发清仓） ==========
@@ -168,7 +181,7 @@ class FundingClose:
                 # 重置防重复状态
                 self._reset_trigger_state()
                 
-                while self.is_active:
+                while self.auto_mode_active and self.funding_strategy_active:
                     # 更新数据
                     market_data, user_data = await self._fetch_data()
                     if market_data is None or user_data is None:
@@ -376,7 +389,7 @@ class FundingClose:
         """60秒倒计时，结束后开启公式检测"""
         try:
             await asyncio.sleep(60)
-            if self.is_active:
+            if self.auto_mode_active and self.funding_strategy_active:
                 self.funding_check_active = True
                 logger.info("✅【资金费清仓工人】60秒倒计时结束，开始公式检测")
         except asyncio.CancelledError:
@@ -443,7 +456,7 @@ class FundingClose:
             
             await asyncio.sleep(wait_seconds)
             
-            if not self.is_active:
+            if not self.auto_mode_active or not self.funding_strategy_active:
                 logger.info("🛑【资金费清仓工人】已停用，取消延迟平仓")
                 return
             
@@ -582,7 +595,7 @@ class FundingClose:
             if current_key == self.last_not_arbitrage_key:
                 return False
             self.last_not_arbitrage_key = current_key
-            logger.warning(f"⚠️【全自動清仓工人】合约名不同: 欧易={okx_symbol}, 币安={binance_symbol}")
+            logger.warning(f"⚠️【资金费清仓工人】合约名不同: 欧易={okx_symbol}, 币安={binance_symbol}")
             return True
         
         # 方向相同
@@ -674,10 +687,10 @@ class FundingClose:
         rate_diff = symbol_data.get('rate_diff')
         if rate_diff is None:
             return False
-        # 这里的0，只是测试用，其实是0.3
+        
         try:
             rate_diff = float(rate_diff)
-            if rate_diff <= 0:
+            if rate_diff <= 0.3:
                 if self.last_rate_diff_triggered:
                     return False
                 self.last_rate_diff_triggered = True
@@ -772,7 +785,7 @@ class FundingClose:
             
             logger.info("=" * 50)
             
-            # 清理工作缓存，保留 is_active
+            # 清理工作缓存，保留 auto_mode_active，清除策略标签
             self._cleanup_work()
             
         except Exception as e:
@@ -783,19 +796,22 @@ class FundingClose:
     # ==================== 清理 ====================
     
     def _cleanup_work(self):
-        """清理本次工作缓存，保留 is_active 和结算时间缓存"""
+        """清理本次工作缓存，保留 auto_mode_active 和结算时间缓存，清除策略标签"""
         self.okx_close_cache = None
         self.binance_close_cache = None
         self.okx_close_copy = None
         self.binance_close_copy = None
         self.current_symbol = None
         self.funding_check_active = False
+        self.funding_strategy_active = False  # 清掉策略标签，等待下次开仓重新发
         self._cancel_funding_timer()
         self._cancel_delayed_close_task()
-        logger.debug("🧹【资金费清仓工人】工作缓存已清空")
+        logger.debug("🧹【资金费清仓工人】工作缓存已清空，策略标签已清除")
     
     def _full_cleanup(self):
         """完全重置"""
+        self.auto_mode_active = False
+        self.funding_strategy_active = False
         self.okx_close_cache = None
         self.binance_close_cache = None
         self.okx_close_copy = None
