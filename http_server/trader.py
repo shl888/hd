@@ -6,8 +6,9 @@
 1. 下单工人启动后，一直循环等待消息
 2. 收到消息（订单参数）后，异步处理
 3. 处理完成后：
-   - 执行结果数据发给大脑
-   - 标签发给标签调度器
+   - 先执行清理残留止损单
+   - 然后发送执行结果给大脑
+   - 最后发送标签给标签调度器
 4. 空闲时：歇着 / 定时校准币安时间
 5. 处理完开仓订单后，自动清理残留的止损止盈单
 
@@ -67,6 +68,10 @@ class Trader:
         # 控制工人运行状态
         self._running = False
         
+        # 🆕 清理防重复
+        self._last_cleanup_time = 0
+        self._cleanup_lock = asyncio.Lock()
+        
         logger.info(f"👷【下单工人】初始化完成 | 模式: {'模拟交易' if use_sandbox else '真实交易'}")
     
     # ========== 对外接口（给大脑用） ==========
@@ -93,7 +98,7 @@ class Trader:
         while self._running:
             try:
                 orders = await self._order_queue.get()
-                await self._process_orders(orders)
+                asyncio.create_task(self._process_orders(orders))
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -141,12 +146,14 @@ class Trader:
                     tasks.append(self._send_order(order, creds))
             
             results = await asyncio.gather(*tasks)
+            
+            # 🆕 先执行清理（在发结果和标签之前）
+            await self._cleanup_algo_orders(creds_map)
+            
+            # 再发结果和标签
             await self._send_results(results)
             
             logger.info(f"✅【下单工人】处理完成，共 {len(results)} 个结果已发送")
-            
-            # 🆕 执行清理残留止损单（无论开仓成功与否）
-            await self._cleanup_algo_orders(creds_map)
             
         except Exception as e:
             logger.error(f"❌【下单工人】处理订单异常: {e}")
@@ -235,20 +242,28 @@ class Trader:
     # ========== 🆕 清理残留止损单 ==========
     
     async def _cleanup_algo_orders(self, creds_map: Dict[str, Dict]):
-        """清理残留的止损止盈单（无论开仓成功与否都执行）"""
-        try:
-            # 欧易清理
-            okx_creds = creds_map.get("okx")
-            if okx_creds:
-                await self._cleanup_okx_algo_orders(okx_creds)
+        """清理残留的止损止盈单（带防重复，2秒内不重复执行）"""
+        now = time.time()
+        if now - self._last_cleanup_time < 2:
+            logger.debug("🧹【下单工人】清理任务2秒内已执行过，跳过")
+            return
+        
+        async with self._cleanup_lock:
+            self._last_cleanup_time = time.time()
             
-            # 币安清理
-            binance_creds = creds_map.get("binance")
-            if binance_creds:
-                await self._cleanup_binance_open_orders(binance_creds)
+            try:
+                # 欧易清理
+                okx_creds = creds_map.get("okx")
+                if okx_creds:
+                    await self._cleanup_okx_algo_orders(okx_creds)
                 
-        except Exception as e:
-            logger.warning(f"⚠️【下单工人】清理残留单异常（可忽略）: {e}")
+                # 币安清理
+                binance_creds = creds_map.get("binance")
+                if binance_creds:
+                    await self._cleanup_binance_open_orders(binance_creds)
+                    
+            except Exception as e:
+                logger.warning(f"⚠️【下单工人】清理残留单异常（可忽略）: {e}")
     
     async def _cleanup_okx_algo_orders(self, creds: Dict):
         """清理欧易残留的止盈止损单"""
@@ -334,11 +349,11 @@ class Trader:
             api_key = creds.get("api_key")
             api_secret = creds.get("api_secret")
             
-            # ========== 1. 查询所有未成交订单 ==========
+            # ========== 1. 查询所有未成交的条件单 ==========
             open_orders = await self._binance_http_request(
                 api_key, api_secret,
                 "GET",
-                "/fapi/v1/openOrders",
+                "/fapi/v1/conditional/openOrders",  # 🆕 改成条件单接口
                 {}
             )
             
