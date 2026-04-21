@@ -1,4 +1,3 @@
-# http_server/trader.py
 """
 下单执行器（下单工人）- 数据驱动模式
 
@@ -6,11 +5,10 @@
 1. 下单工人启动后，一直循环等待消息
 2. 收到消息（订单参数）后，异步处理
 3. 处理完成后：
-   - 先执行清理残留止损单
-   - 然后发送执行结果给大脑
-   - 最后发送标签给标签调度器
+   - 执行结果数据发给大脑
+   - 标签发给标签调度器
 4. 空闲时：歇着 / 定时校准币安时间
-5. 处理完开仓订单后，自动清理残留的止损止盈单
+5. 收到开仓参数时，额外触发清理残留止损单任务
 
 数据流向：
 - 大脑 → 下单工人：订单参数（send_orders）
@@ -68,7 +66,7 @@ class Trader:
         # 控制工人运行状态
         self._running = False
         
-        # 🆕 清理防重复
+        # 清理防重复（2秒内不重复执行）
         self._last_cleanup_time = 0
         self._cleanup_lock = asyncio.Lock()
         
@@ -146,14 +144,17 @@ class Trader:
                     tasks.append(self._send_order(order, creds))
             
             results = await asyncio.gather(*tasks)
-            
-            # 🆕 先执行清理（在发结果和标签之前）
-            await self._cleanup_algo_orders(creds_map)
-            
-            # 再发结果和标签
             await self._send_results(results)
             
             logger.info(f"✅【下单工人】处理完成，共 {len(results)} 个结果已发送")
+            
+            # ========== 新增：独立的清理任务 ==========
+            # 触发条件：收到的参数中有开仓参数
+            # 同步执行，阻塞主循环，确保止损参数不会并发
+            for order in orders:
+                if order.get("type") == "open_market":
+                    await self._cleanup_algo_orders(creds_map)
+                    break
             
         except Exception as e:
             logger.error(f"❌【下单工人】处理订单异常: {e}")
@@ -239,7 +240,7 @@ class Trader:
         
         return None
     
-    # ========== 🆕 清理残留止损单 ==========
+    # ========== 清理残留止损单（收到开仓参数时触发） ==========
     
     async def _cleanup_algo_orders(self, creds_map: Dict[str, Dict]):
         """清理残留的止损止盈单（带防重复，2秒内不重复执行）"""
@@ -275,13 +276,11 @@ class Trader:
             # ========== 1. 查询未完成的策略委托（GET） ==========
             timestamp = self._okx_get_timestamp()
             endpoint = "/api/v5/trade/orders-algo-pending"
-            params = {"ordType": "conditional,oco"}  # 止盈止损 + OCO
+            params = {"ordType": "conditional,oco"}
             
-            # 拼查询参数
             query_string = "&".join([f"{k}={v}" for k, v in params.items()])
             full_endpoint = f"{endpoint}?{query_string}"
             
-            # GET 签名：timestamp + GET + full_endpoint（body为空）
             sign_str = timestamp + "GET" + full_endpoint
             signature = base64.b64encode(
                 hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).digest()
@@ -311,7 +310,7 @@ class Trader:
             
             orders = pending.get('data', [])
             if not orders:
-                logger.info("🧹【下单工人】欧易无残留止损单")
+                logger.debug("🧹【下单工人】欧易无残留止损单")
                 return
             
             # ========== 2. 提取 instId 和 algoId ==========
@@ -325,7 +324,7 @@ class Trader:
             if not cancel_list:
                 return
             
-            # ========== 3. 批量撤销（POST，每次最多10个） ==========
+            # ========== 3. 批量撤销（每次最多10个） ==========
             batch_size = 10
             for i in range(0, len(cancel_list), batch_size):
                 batch = cancel_list[i:i+batch_size]
@@ -353,12 +352,12 @@ class Trader:
             open_orders = await self._binance_http_request(
                 api_key, api_secret,
                 "GET",
-                "/fapi/v1/conditional/openOrders",  # 🆕 改成条件单接口
+                "/fapi/v1/conditional/openOrders",
                 {}
             )
             
             if not isinstance(open_orders, list) or len(open_orders) == 0:
-                logger.info("🧹【下单工人】币安无残留条件单")
+                logger.debug("🧹【下单工人】币安无残留条件单")
                 return
             
             # ========== 2. 提取所有不重复的合约名 ==========
@@ -538,34 +537,19 @@ class Trader:
                                      method: str, endpoint: str, params: Dict) -> Dict:
         """
         执行币安 HTTP 请求（新版签名规则）
-        
-        根据币安 2026-01-15 生效的新规：
-        1. 构建原始参数字符串（key=value&key=value...），按字母顺序排序
-        2. 对整个原始字符串做百分比编码（保留 = 和 & 不编码）
-        3. 对编码后的字符串计算 HMAC-SHA256 签名
-        4. 发送时使用编码后的字符串 + &signature=签名
         """
         base_url = self._binance_get_base_url()
         
-        # 复制参数，避免修改原字典
         params = params.copy()
-        
-        # 添加必要参数
         params['timestamp'] = self._binance_get_timestamp()
         params['recvWindow'] = 5000
         
-        # 步骤1：构建原始参数字符串（按字母顺序排序，排除 signature）
         sign_params = {k: v for k, v in params.items() if k != 'signature'}
         sorted_params = sorted(sign_params.items())
         raw_query_string = "&".join([f"{k}={v}" for k, v in sorted_params])
         
-        # 步骤2：对整个原始字符串做百分比编码（保留 = 和 & 不编码）
         encoded_payload = urllib.parse.quote(raw_query_string, safe='=&')
-        
-        # 步骤3：对编码后的字符串计算签名
         signature = hmac.new(api_secret.encode(), encoded_payload.encode(), hashlib.sha256).hexdigest()
-        
-        # 步骤4：最终请求体 = 编码后的字符串 + "&signature=" + 签名
         final_query_string = encoded_payload + "&signature=" + signature
         
         logger.info(f"📤【下单工人】币安请求 [{endpoint}] 最终请求体: {final_query_string[:200]}...")
@@ -586,13 +570,11 @@ class Trader:
                 full_url = f"{url}?{final_query_string}"
                 return requests.delete(full_url, headers=headers)
             else:
-                # GET 请求：把 final_query_string 拼到 URL
                 full_url = f"{url}?{final_query_string}"
                 return requests.get(full_url, headers=headers)
         
         response = await loop.run_in_executor(self._executor, _request)
         
-        # 检查 HTTP 状态码
         if response.status_code >= 400:
             logger.error(f"❌【下单工人】币安 HTTP 错误 [{endpoint}]: {response.status_code} - {response.text[:200]}")
             return {"error": f"HTTP {response.status_code}", "raw_response": response.text[:500]}
