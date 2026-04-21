@@ -532,8 +532,15 @@ class FundingOpen:
         instruction = copy.deepcopy(self.cached_template)
         
         try:
+            # 发送开仓指令给大脑
             await self.brain.handle_frontend_command(instruction)
             logger.info(f"📤【资金费开仓工人】开仓指令已发送给大脑")
+            
+            # 🆕 发送策略标签给标签调度器
+            if hasattr(self.brain, 'tag_dispatcher') and self.brain.tag_dispatcher:
+                await self.brain.tag_dispatcher.receive({"info": "当前策略:资金费套利"})
+                logger.info("🏷️【资金费开仓工人】策略标签已发送: 当前策略:资金费套利")
+                
         except Exception as e:
             logger.error(f"❌【资金费开仓工人】发送指令给大脑失败: {e}")
     
