@@ -87,7 +87,7 @@ class FundingClose:
             return
         
         info = data["info"]
-        logger.debug(f"📥【资金费清仓工人】收到标签: {info}")
+        logger.info(f"📥【资金费清仓工人】收到标签: {info}")
         
         if info == "开启全自动":
             self.auto_mode_active = True
@@ -806,7 +806,7 @@ class FundingClose:
         self.funding_strategy_active = False  # 清掉策略标签，等待下次开仓重新发
         self._cancel_funding_timer()
         self._cancel_delayed_close_task()
-        logger.debug("🧹【资金费清仓工人】工作缓存已清空，策略标签已清除")
+        logger.info("🧹【资金费清仓工人】工作缓存已清空，策略标签已清除")
     
     def _full_cleanup(self):
         """完全重置"""
