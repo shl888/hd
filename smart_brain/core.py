@@ -8,6 +8,7 @@
 - 管理交易模式（禁止交易 / 半自动 / 全自动）
 - 生成并发送内部标签（开启全自动 / 结束全自动）
 - 不解析指令内容，不处理业务逻辑
+- 不处理任何配置相关的指令（由 ConfigLoader 负责）
 """
 
 import asyncio
@@ -37,6 +38,7 @@ class SmartBrain:
     - 工人各自独立，通过数据驱动工作
     - 交易模式控制：禁止交易（禁止）/ 半自动（半自动）/ 全自动（全自动）
     - 标签调度器：专门处理外部标签的接收与转发
+    - 配置管理：完全交给 ConfigLoader，大脑不参与
     """
     
     def __init__(self, http_server=None, http_runner=None, 
@@ -83,9 +85,6 @@ class SmartBrain:
         self.running = False
         self.status_log_task = None
         
-        # ========== 配置数据 ==========
-        self.config_data = None
-        
         # ========== 交易模式 ==========
         # 禁止交易: 禁止交易
         # 半自动: 半自动模式（前端手动操作）
@@ -96,54 +95,6 @@ class SmartBrain:
         signal.signal(signal.SIGINT, self.handle_signal)
         signal.signal(signal.SIGTERM, self.handle_signal)
     
-    # ==================== API凭证加载 ====================
-    
-    def _load_api_credentials(self):
-        """从环境变量加载 API 凭证（暂时明文，未来改解密）"""
-        
-        # 币安 API
-        binance_key = os.getenv('BINANCE_API_KEY')
-        binance_secret = os.getenv('BINANCE_API_SECRET')
-        
-        if not binance_key or not binance_secret:
-            logger.error("❌【智能大脑】币安 API 凭证不完整，程序将无法正常交易")
-        else:
-            self.data_manager.set_api_credentials('binance', binance_key, binance_secret)
-            logger.info("✅【智能大脑】币安 API 凭证已加载")
-        
-        # OKX API
-        okx_key = os.getenv('OKX_API_KEY')
-        okx_secret = os.getenv('OKX_API_SECRET')
-        # 兼容两种写法
-        okx_passphrase = os.getenv('OKX_API_PASSPHRASE') or os.getenv('OKX_passphrase')
-        
-        if not okx_key or not okx_secret or not okx_passphrase:
-            logger.error("❌【智能大脑】OKX API 凭证不完整，程序将无法正常交易")
-            missing = []
-            if not okx_key:
-                missing.append("OKX_API_KEY")
-            if not okx_secret:
-                missing.append("OKX_API_SECRET")
-            if not okx_passphrase:
-                missing.append("OKX_API_PASSPHRASE/OKX_passphrase")
-            logger.error(f"   缺失的变量: {', '.join(missing)}")
-        else:
-            self.data_manager.set_api_credentials('okx', okx_key, okx_secret, okx_passphrase)
-            logger.info("✅【智能大脑】OKX API 凭证已加载")
-    
-    # ==================== 数据库配置加载 ====================
-    
-    def _load_database_config(self):
-        """从环境变量加载数据库配置（暂时明文，未来改解密）"""
-        
-        mongodb_uri = os.getenv('MONGODB_URI')
-        
-        if not mongodb_uri:
-            logger.error("❌【智能大脑】MONGODB_URI 未设置，数据库功能将无法使用")
-        else:
-            self.data_manager.set_database_config('mongodb_uri', mongodb_uri)
-            logger.info("✅【智能大脑】MongoDB 配置已加载")
-    
     # ==================== 初始化 ====================
     
     async def initialize(self):
@@ -152,9 +103,13 @@ class SmartBrain:
         logger.info(f"🔒【智能大脑】初始交易模式: {self.trade_mode}（禁止交易）")
         
         try:
-            # ========== 0. 加载配置 ==========
-            self._load_api_credentials()
-            self._load_database_config()
+            # ========== 0. 初始化配置加载器 ==========
+            from .config_loader import ConfigLoader
+            from . import set_config_loader
+            config_loader = ConfigLoader(self.data_manager)
+            set_config_loader(config_loader)  # 设置全局实例，供 qd_server 获取
+            config_loader.load_all()
+            logger.info("✅【智能大脑】配置加载器已初始化")
             
             # 1. 初始化HTTP模块服务
             try:
@@ -271,6 +226,7 @@ class SmartBrain:
         接收前端指令
         
         大脑不再解析指令内容，直接转发给对应的工人
+        注意：配置相关的指令（如解密密码）不经过这里，由 qd_server 直接发给 ConfigLoader
         """
         command = command_data.get('command')
         params = command_data.get('params', {})
@@ -283,7 +239,7 @@ class SmartBrain:
             self.trade_mode = new_mode
             
             # 切换到全自动模式：发送「开启全自动」标签
-            if new_mode == '全自动' and old_mode != '全自動':
+            if new_mode == '全自动' and old_mode != '全自动':
                 # 资金费套利工人
                 if self.funding_open:
                     self.funding_open.on_data({"info": "开启全自动"})
@@ -328,18 +284,6 @@ class SmartBrain:
                 "message": f"交易模式已切换为 {self.trade_mode}",
                 "old_mode": old_mode,
                 "new_mode": self.trade_mode
-            }
-        
-        # ========== 配置指令 ==========
-        if command == 'save_config':
-            self.config_data = params.get('config_data', '')
-            logger.info(f"💾【智能大脑】收到配置指令")
-            return {
-                "success": True,
-                "received": True,
-                "command": command,
-                "message": f"配置已保存",
-                "config_length": len(self.config_data)
             }
         
         # ========== 开仓指令（半自动） ==========
