@@ -5,13 +5,13 @@
 from .core import SmartBrain
 from .data_manager import DataManager
 from .tag_dispatcher import TagDispatcher
-from .config_loader import ConfigLoader
+from .config_handler import Confighandler
 
 # 注意：command_router 已删除，不再导入
 
 # ==================== 全局brain实例管理 ====================
 _brain_instance = None
-_config_loader_instance = None
+_config_handler_instance = None
 
 def set_brain_instance(brain):
     """供launcher设置brain实例"""
@@ -23,15 +23,15 @@ def get_brain_instance():
     """供其他模块获取brain实例"""
     return _brain_instance
 
-def set_config_loader(loader):
-    """供core设置ConfigLoader实例"""
-    global _config_loader_instance
-    _config_loader_instance = loader
-    print("✅ [智能大脑] 全局ConfigLoader实例已设置")
+def set_config_handler(handler):
+    """供core设置Confighandler实例"""
+    global _config_handler_instance
+    _config_handler_instance = handler
+    print("✅ [智能大脑] 全局Confighandler实例已设置")
 
-def get_config_loader():
-    """供qd_server获取ConfigLoader实例"""
-    return _config_loader_instance
+def get_config_handler():
+    """供qd_server获取Confighandler实例"""
+    return _config_handler_instance
 
 def receive_private_data(data):
     """
@@ -49,11 +49,11 @@ __all__ = [
     'SmartBrain',
     'DataManager',
     'TagDispatcher',
-    'ConfigLoader',
+    'Confighandler',
     'set_brain_instance',
     'get_brain_instance',
-    'set_config_loader',
-    'get_config_loader',
+    'set_config_handler',
+    'get_config_handler',
     'receive_private_data',
 ]
 __version__ = '2.1.0'

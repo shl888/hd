@@ -8,7 +8,7 @@
 - 管理交易模式（禁止交易 / 半自动 / 全自动）
 - 生成并发送内部标签（开启全自动 / 结束全自动）
 - 不解析指令内容，不处理业务逻辑
-- 不处理任何配置相关的指令（由 ConfigLoader 负责）
+- 不处理任何配置相关的指令（由 ConfigHandler 负责）
 """
 
 import asyncio
@@ -38,7 +38,7 @@ class SmartBrain:
     - 工人各自独立，通过数据驱动工作
     - 交易模式控制：禁止交易（禁止）/ 半自动（半自动）/ 全自动（全自动）
     - 标签调度器：专门处理外部标签的接收与转发
-    - 配置管理：完全交给 ConfigLoader，大脑不参与
+    - 配置管理：完全交给 ConfigHandler，大脑不参与
     """
     
     def __init__(self, http_server=None, http_runner=None, 
@@ -104,11 +104,11 @@ class SmartBrain:
         
         try:
             # ========== 0. 初始化配置加载器 ==========
-            from .config_loader import ConfigLoader
-            from . import set_config_loader
-            config_loader = ConfigLoader(self.data_manager)
-            set_config_loader(config_loader)  # 设置全局实例，供 qd_server 获取
-            config_loader.load_all()
+            from .config_handler import ConfigHandler
+            from . import set_config_handler
+            config_handler = ConfigHandler(self.data_manager)
+            set_config_handler(config_handler)  # 设置全局实例，供 qd_server 获取
+            config_handler.load_all()
             logger.info("✅【智能大脑】配置加载器已初始化")
             
             # 1. 初始化HTTP模块服务
@@ -226,7 +226,7 @@ class SmartBrain:
         接收前端指令
         
         大脑不再解析指令内容，直接转发给对应的工人
-        注意：配置相关的指令（如解密密码）不经过这里，由 qd_server 直接发给 ConfigLoader
+        注意：配置相关的指令（如解密密码）不经过这里，由 qd_server 直接发给 ConfigHandler
         """
         command = command_data.get('command')
         params = command_data.get('params', {})
