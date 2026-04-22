@@ -31,10 +31,24 @@ class DataManager:
             'market_data': {},           # 公开市场数据（实时行情、费率差）
             'user_data': {},             # 私人用户数据（币安+欧易）
             'reference_data': {},        # 公开参考数据（合约面值等）
-            'env_apis': self._load_apis_from_env(),
+            'env_apis': {},              # API凭证（由core负责加载）
             'exchange_tokens': {},       # 专门存储listenKey
             'binance_ticker_24hr': {}    # 币安24小时涨跌幅数据
         }
+    
+    # ==================== API凭证管理 ====================
+    
+    def set_api_credentials(self, exchange: str, api_key: str, api_secret: str, passphrase: str = None):
+        """供 core 调用，存入 API 凭证"""
+        creds = {
+            'api_key': api_key,
+            'api_secret': api_secret
+        }
+        if passphrase:
+            creds['passphrase'] = passphrase
+        
+        self.memory_store['env_apis'][exchange] = creds
+        logger.info(f"✅【数据管理器】API凭证已存入: {exchange}")
     
     # ==================== 接收步骤 ====================
     
@@ -65,12 +79,6 @@ class DataManager:
                 }
                 self.last_reference_time = now
                 logger.debug(f"✅【智能大脑】参考数据 {exchange}.{data_type} 已保存（不推送前端）")
-                
-                # ❌ 不再推送到前端（前端不需要面值/精度数据）
-                # if self.brain.frontend_relay:
-                #     reference_data_to_push = self.memory_store.get('reference_data', {})
-                #     await self.brain.frontend_relay.broadcast_reference_data(reference_data_to_push)
-                #     logger.debug(f"📤【智能大脑】已推送面值数据，共{len(reference_data_to_push)}条")
                 
             elif data_type == 'user_summary':
                 # 🎯 用户数据：账户、持仓、订单等
@@ -596,27 +604,6 @@ class DataManager:
         """供HTTP模块和连接池只读查询API凭证"""
         return self.memory_store['env_apis'].get(exchange)
     
-    def _load_apis_from_env(self):
-        """从环境变量加载API凭证"""
-        apis = {
-            'binance': {
-                'api_key': os.getenv('BINANCE_API_KEY'),
-                'api_secret': os.getenv('BINANCE_API_SECRET'),
-            },
-            'okx': {
-                'api_key': os.getenv('OKX_API_KEY'),
-                'api_secret': os.getenv('OKX_API_SECRET'),
-                'passphrase': os.getenv('OKX_passphrase', ''),
-            }
-        }
-        
-        for exchange, creds in apis.items():
-            if not creds['api_key'] or not creds['api_secret']:
-                logger.warning(f"⚠️【智能大脑】环境变量中{exchange}的API凭证不完整")
-        
-        logger.info(f"✅【智能大脑】已从环境变量加载API凭证")
-        return apis
-    
     # ==================== 辅助方法 ====================
     
     def _format_time_iso(self, dt):
@@ -667,35 +654,6 @@ class DataManager:
 涨跌幅数据: {ticker_count}条
 前端连接: {frontend_status}""")
                 
-                # ❌ 不再推送系统状态到前端
-                # if self.brain.frontend_relay and frontend_clients > 0:
-                #     try:
-                #         system_status = {
-                #             'market_data': {
-                #                 'count': market_count,
-                #                 'last_update': market_time
-                #             },
-                #             'user_data': {
-                #                 'count': user_count,
-                #                 'last_update': user_time
-                #             },
-                #             'reference_data': {
-                #                 'count': ref_count,
-                #                 'last_update': ref_time
-                #             },
-                #             'binance_ticker_24hr': {
-                #                 'count': ticker_count
-                #             },
-                #             'frontend': {
-                #                 'clients': frontend_clients,
-                #                 'messages_sent': frontend_stats.get('messages_broadcast', 0)
-                #             },
-                #             'timestamp': datetime.now().isoformat()
-                #         }
-                #         await self.brain.frontend_relay.broadcast_system_status(system_status)
-                #     except Exception as e:
-                #         logger.debug(f"❌【智能大脑】推送系统状态失败: {e}")
-                
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -729,9 +687,6 @@ class DataManager:
     
     async def update_binance_ticker_24hr(self, ticker_data: Dict):
         """更新币安24小时涨跌幅数据"""
-        # 添加更新时间戳
-        ticker_data['_updated_at'] = datetime.now().isoformat()
-        
         # 存入存储区
         self.memory_store['binance_ticker_24hr'] = ticker_data
         
@@ -739,4 +694,4 @@ class DataManager:
         if self.brain.frontend_relay:
             await self.brain.frontend_relay.broadcast_binance_ticker_24hr(ticker_data)
         
-        logger.debug(f"📊【数据管理器】币安24h涨跌幅数据已更新，共 {len(ticker_data) - 1} 条")
+        logger.debug(f"📊【数据管理器】币安24h涨跌幅数据已更新，共 {len(ticker_data)} 条")

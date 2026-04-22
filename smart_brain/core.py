@@ -96,6 +96,41 @@ class SmartBrain:
         signal.signal(signal.SIGINT, self.handle_signal)
         signal.signal(signal.SIGTERM, self.handle_signal)
     
+    # ==================== API凭证加载 ====================
+    
+    def _load_api_credentials(self):
+        """从环境变量加载 API 凭证（暂时明文，未来改解密）"""
+        
+        # 币安 API
+        binance_key = os.getenv('BINANCE_API_KEY')
+        binance_secret = os.getenv('BINANCE_API_SECRET')
+        
+        if not binance_key or not binance_secret:
+            logger.error("❌【智能大脑】币安 API 凭证不完整，程序将无法正常交易")
+        else:
+            self.data_manager.set_api_credentials('binance', binance_key, binance_secret)
+            logger.info("✅【智能大脑】币安 API 凭证已加载")
+        
+        # OKX API
+        okx_key = os.getenv('OKX_API_KEY')
+        okx_secret = os.getenv('OKX_API_SECRET')
+        # 兼容两种写法
+        okx_passphrase = os.getenv('OKX_API_PASSPHRASE') or os.getenv('OKX_passphrase')
+        
+        if not okx_key or not okx_secret or not okx_passphrase:
+            logger.error("❌【智能大脑】OKX API 凭证不完整，程序将无法正常交易")
+            missing = []
+            if not okx_key:
+                missing.append("OKX_API_KEY")
+            if not okx_secret:
+                missing.append("OKX_API_SECRET")
+            if not okx_passphrase:
+                missing.append("OKX_API_PASSPHRASE/OKX_passphrase")
+            logger.error(f"   缺失的变量: {', '.join(missing)}")
+        else:
+            self.data_manager.set_api_credentials('okx', okx_key, okx_secret, okx_passphrase)
+            logger.info("✅【智能大脑】OKX API 凭证已加载")
+    
     # ==================== 初始化 ====================
     
     async def initialize(self):
@@ -104,6 +139,9 @@ class SmartBrain:
         logger.info(f"🔒【智能大脑】初始交易模式: {self.trade_mode}（禁止交易）")
         
         try:
+            # ========== 0. 加载 API 凭证 ==========
+            self._load_api_credentials()
+            
             # 1. 初始化HTTP模块服务
             try:
                 from http_server.service import HTTPModuleService
