@@ -21,8 +21,8 @@
 - 触发后进入步骤3
 - 20 分钟内未触发则结束本小时工作
 
-步骤3：蹲守期（固定 30 秒）
-- 每 10 秒检测一次，需要连续 3 次价差 < 4.5%
+步骤3：蹲守期（固定 9 秒）
+- 每 3 秒检测一次，需要连续 3 次价差 < 4.5%
 - 任意一次 ≥ 4.5% 则重置计数
 - 通过后进入步骤4
 
@@ -65,9 +65,10 @@ class SpreadOpenConfig:
     TRIGGER_THRESHOLD = 3.0           # 触发蹲守的价差阈值（%）
     
     # 步骤3：蹲守期
-    WAITING_CHECK_INTERVAL = 10       # 10秒检测一次
+    WAITING_CHECK_INTERVAL = 3       # 3秒检测一次
     WAITING_SAFE_COUNT = 3            # 需要连续 3 次安全
     WAITING_REBOUND_THRESHOLD = 4.5   # 反弹淘汰阈值（%）
+    # 总蹲守时长 = 3秒 × 3次 = 9秒
     
     # 步骤4：健康检查
     HEALTH_THRESHOLD = 1.5            # 成交-标记价差阈值（%）
@@ -473,7 +474,7 @@ class SpreadOpen:
     async def _step3_waiting(self, triggered: Dict[str, float]) -> Optional[str]:
         """
         步骤3：蹲守期
-        每 10 秒检测一次，连续 3 次 < 4.5% 即通过
+        每 3 秒检测一次，连续 3 次 < 4.5% 即通过
         """
         for symbol, peak in triggered.items():
             safe_count = 0
