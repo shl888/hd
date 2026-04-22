@@ -103,13 +103,13 @@ class SmartBrain:
         logger.info(f"🔒【智能大脑】初始交易模式: {self.trade_mode}（禁止交易）")
         
         try:
-            # ========== 0. 初始化配置加载器 ==========
+            # ========== 0. 初始化配置处理器 ==========
             from .config_handler import ConfigHandler
             from . import set_config_handler
             config_handler = ConfigHandler(self.data_manager)
             set_config_handler(config_handler)  # 设置全局实例，供 qd_server 获取
             config_handler.load_credentials()
-            logger.info("✅【智能大脑】配置加载器已初始化")
+            logger.info("✅【智能大脑】配置处理器已初始化")
             
             # 1. 初始化HTTP模块服务
             try:
