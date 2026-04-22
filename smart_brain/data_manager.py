@@ -32,6 +32,7 @@ class DataManager:
             'user_data': {},             # 私人用户数据（币安+欧易）
             'reference_data': {},        # 公开参考数据（合约面值等）
             'env_apis': {},              # API凭证（由core负责加载）
+            'env_database': {},          # 数据库配置（由core负责加载）
             'exchange_tokens': {},       # 专门存储listenKey
             'binance_ticker_24hr': {}    # 币安24小时涨跌幅数据
         }
@@ -49,6 +50,17 @@ class DataManager:
         
         self.memory_store['env_apis'][exchange] = creds
         logger.info(f"✅【数据管理器】API凭证已存入: {exchange}")
+    
+    # ==================== 数据库配置管理 ====================
+    
+    def set_database_config(self, key: str, value: str):
+        """供 core 调用，存入数据库配置"""
+        self.memory_store['env_database'][key] = value
+        logger.info(f"✅【数据管理器】数据库配置已存入: {key}")
+    
+    def get_database_config(self, key: str) -> str:
+        """供使用方获取数据库配置"""
+        return self.memory_store['env_database'].get(key)
     
     # ==================== 接收步骤 ====================
     

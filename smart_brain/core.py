@@ -131,6 +131,19 @@ class SmartBrain:
             self.data_manager.set_api_credentials('okx', okx_key, okx_secret, okx_passphrase)
             logger.info("✅【智能大脑】OKX API 凭证已加载")
     
+    # ==================== 数据库配置加载 ====================
+    
+    def _load_database_config(self):
+        """从环境变量加载数据库配置（暂时明文，未来改解密）"""
+        
+        mongodb_uri = os.getenv('MONGODB_URI')
+        
+        if not mongodb_uri:
+            logger.error("❌【智能大脑】MONGODB_URI 未设置，数据库功能将无法使用")
+        else:
+            self.data_manager.set_database_config('mongodb_uri', mongodb_uri)
+            logger.info("✅【智能大脑】MongoDB 配置已加载")
+    
     # ==================== 初始化 ====================
     
     async def initialize(self):
@@ -139,8 +152,9 @@ class SmartBrain:
         logger.info(f"🔒【智能大脑】初始交易模式: {self.trade_mode}（禁止交易）")
         
         try:
-            # ========== 0. 加载 API 凭证 ==========
+            # ========== 0. 加载配置 ==========
             self._load_api_credentials()
+            self._load_database_config()
             
             # 1. 初始化HTTP模块服务
             try:
@@ -191,9 +205,9 @@ class SmartBrain:
             self.tag_dispatcher = TagDispatcher(
                 open_worker=self.open_worker,
                 funding_sltp=self.funding_sltp,
-                funding_close=self.funding_close,      # 加这行
+                funding_close=self.funding_close,
                 spread_sltp=self.spread_sltp,
-                spread_close=self.spread_close         # 加这行
+                spread_close=self.spread_close
             )
             logger.info("✅【智能大脑】标签调度器已创建")
             
@@ -269,7 +283,7 @@ class SmartBrain:
             self.trade_mode = new_mode
             
             # 切换到全自动模式：发送「开启全自动」标签
-            if new_mode == '全自动' and old_mode != '全自动':
+            if new_mode == '全自动' and old_mode != '全自動':
                 # 资金费套利工人
                 if self.funding_open:
                     self.funding_open.on_data({"info": "开启全自动"})
