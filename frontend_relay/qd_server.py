@@ -70,6 +70,9 @@ class FrontendRelayServer:
         self.runner: Optional[web.AppRunner] = None
         self.site: Optional[web.TCPSite] = None
         
+        # ========== 密钥就绪标志 ==========
+        self._keys_ready = False
+        
         logger.info(f"🔄【客户端】 前端中继初始化完成，端口: {self.port}")
         logger.info(f"🔐【客户端】 密钥验证已启用（连接后发送auth消息）")
     
@@ -90,6 +93,16 @@ class FrontendRelayServer:
         # ========== 日志接口（转发给日志处理器） ==========
         self.app.router.add_get('/api/logs/stream', self.logs_handler.stream)
         self.app.router.add_get('/api/logs/history', self.logs_handler.history)
+    
+    # ==================== 标签接收 ====================
+    
+    def on_keys_ready(self):
+        """
+        接收「密钥已就绪」标签
+        由 TagDispatcher 调用
+        """
+        self._keys_ready = True
+        logger.info("🔑【客户端】密钥已就绪，获得工作权限")
     
     # ======================================================================
     # 🏠 房间1：WebSocket 和 HTTP API 处理
@@ -228,10 +241,27 @@ class FrontendRelayServer:
                                                 logger.debug(f"📊【客户端】收到统计指令")
                                                 logger.debug(f"   请求参数: {data2}")
                                                 logger.debug(f"   客户端: {client_id}")
+                                                
+                                                # ===== 1.5 检查密钥是否就绪 =====
+                                                if not self._keys_ready:
+                                                    logger.warning("⏳【客户端】密钥未就绪，无法处理统计请求")
+                                                    await ws.send_json({
+                                                        "type": "stats_result",
+                                                        "data": {
+                                                            'okx_trades': 0, 'okx_avg_margin': 0.0, 'okx_total_fee': 0.0,
+                                                            'okx_total_funding': 0.0, 'okx_total_profit': 0.0,
+                                                            'binance_trades': 0, 'binance_avg_margin': 0.0, 'binance_total_fee': 0.0,
+                                                            'binance_total_funding': 0.0, 'binance_total_profit': 0.0,
+                                                            'net_fee': 0.0, 'net_funding': 0.0, 'net_profit': 0.0,
+                                                            'net_pnl': 0.0, 'net_pnl_rate': 0.0,
+                                                        },
+                                                        "timestamp": time.time()
+                                                    })
+                                                    return
+                                                # =================================
+                                                
                                                 logger.debug(f"📤【客户端】转发统计指令给 StatsHandler 处理...")
-                                                
                                                 await self.stats_handler.handle(data2)
-                                                
                                                 logger.info(f"✅【客户端】统计指令已转发给 StatsHandler")
                                             # ========== 统计指令处理结束 ==========
                                             
@@ -677,4 +707,3 @@ class FrontendRelayServer:
             "uptime_seconds": uptime,
             "auth_enabled": True
         }
-        
