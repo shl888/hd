@@ -113,10 +113,23 @@ class Scheduler:
         self.repair_binance = None     # 币安修复区入口
         self.repair_okx = None         # 欧易修复文件
         
+        # ========== 密钥就绪标志 ==========
+        self._keys_ready = False
+        
         # 记录当前模式
         mode_name = "量子纠缠" if not self.USE_DEEPCOPY else "隔离"
         mode_desc = "大脑能看到数据库字段" if not self.USE_DEEPCOPY else "大脑数据干净"
         logger.info(f"✅ 调度区初始化完成 - 当前模式: {mode_name}模式（{mode_desc}）")
+
+    # ==================== 标签接收 ====================
+    
+    def on_keys_ready(self):
+        """
+        接收「密钥已就绪」标签
+        由 TagDispatcher 调用
+        """
+        self._keys_ready = True
+        logger.info("🔑【调度区】密钥已就绪，获得工作权限")
 
     # ==================== 设置下游模块 ====================
 
@@ -163,6 +176,12 @@ class Scheduler:
         :param message: 检测区推送的消息
         ==================================================
         """
+        # ===== 1.5 检查密钥是否就绪 =====
+        if not self._keys_ready:
+            logger.warning("⏳【调度区】密钥未就绪，无法处理消息")
+            return
+        # =================================
+        
         try:
             # ===== 情况1：收到数据标签 =====
             if 'tag' in message:
