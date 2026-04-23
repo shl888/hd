@@ -9,8 +9,10 @@ import time
 import logging
 import json
 import os
+import base64
 from typing import List, Dict, Any, Optional
 from aiohttp import web
+from Crypto.Cipher import AES
 
 # ========== 处理器导入 ==========
 from .stats_handler import StatsHandler
@@ -34,11 +36,17 @@ class FrontendRelayServer:
         self.brain = brain_instance
         self.port = port
         
-        # 从环境变量读取密钥
-        self.valid_token = os.getenv('FRONTEND_TOKEN', '')
-        if not self.valid_token:
-            logger.warning(f"⚠️【客户端】 FRONTEND_TOKEN未设置，使用默认密钥（不安全）")
-            self.valid_token = 'default_token_change_me'
+        # 从环境变量读取密文
+        self._token_enc = os.getenv('FRONTEND_TOKEN')
+        self.valid_token = None  # 解密后才会有值
+        
+        # 连接锁定
+        self._connection_locked = False
+        self.current_client_id = None
+        
+        # 失败次数限制
+        self._failed_attempts: Dict[str, int] = {}
+        self._max_failed_attempts = 3
         
         # WebSocket客户端管理（存储认证状态）
         self.ws_clients: List[Dict] = []  # 每个元素: {'ws': ws, 'authenticated': bool, 'client_id': str}
@@ -74,7 +82,7 @@ class FrontendRelayServer:
         self._keys_ready = False
         
         logger.info(f"🔄【客户端】 前端中继初始化完成，端口: {self.port}")
-        logger.info(f"🔐【客户端】 密钥验证已启用（连接后发送auth消息）")
+        logger.info(f"🔐【客户端】 等待前端连接验证...")
     
     def _setup_routes(self):
         """设置路由"""
@@ -93,6 +101,44 @@ class FrontendRelayServer:
         # ========== 日志接口（转发给日志处理器） ==========
         self.app.router.add_get('/api/logs/stream', self.logs_handler.stream)
         self.app.router.add_get('/api/logs/history', self.logs_handler.history)
+    
+    # ==================== 解密方法 ====================
+    
+    def _decrypt(self, ciphertext_b64: str, password: str) -> str:
+        """
+        用密码解密密文，返回明文
+        使用 AES-256-GCM
+        """
+        if not ciphertext_b64:
+            return None
+        
+        # 密码补齐到 32 字节
+        key = password.encode('utf-8').ljust(32, b'\0')[:32]
+        
+        # 解码 Base64
+        data = base64.b64decode(ciphertext_b64)
+        
+        # 拆分: nonce(12) + 密文 + tag(16)
+        nonce = data[:12]
+        tag = data[-16:]
+        ciphertext = data[12:-16]
+        
+        # AES-256-GCM 解密
+        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+        plaintext = cipher.decrypt_and_verify(ciphertext, tag)
+        
+        return plaintext.decode('utf-8')
+    
+    # ==================== 踢掉其他连接 ====================
+    
+    async def _kick_all_other_clients(self, keep_client_id: str):
+        """踢掉除指定客户端外的所有连接"""
+        for client in self.ws_clients:
+            if client['client_id'] != keep_client_id:
+                try:
+                    await client['ws'].close()
+                except:
+                    pass
     
     # ==================== 标签接收 ====================
     
@@ -120,11 +166,21 @@ class FrontendRelayServer:
         # 2. 记录临时连接（未认证）
         client_ip = request.remote
         client_id = f"qd_{client_ip}_{int(time.time())}"
+        
+        # ===== 检查是否已锁定 =====
+        if self._connection_locked:
+            logger.warning(f"🔒【客户端】已有活动连接，拒绝新连接: {client_id}")
+            await ws.send_json({"type": "error", "error": "已有其他客户端连接"})
+            await ws.close()
+            return ws
+        # ========================
+        
         client_info = {
             'ws': ws,
             'authenticated': False,
             'client_id': client_id,
-            'ip': client_ip
+            'ip': client_ip,
+            'password': None
         }
         self.ws_clients.append(client_info)
         self.stats["total_connections"] += 1
@@ -144,11 +200,43 @@ class FrontendRelayServer:
                         
                         # 处理认证消息
                         if data.get('type') == 'auth':
-                            token = data.get('token', '')
+                            password = data.get('token', '')
+                            client_info['password'] = password
                             logger.info(f"🔐【客户端】收到认证请求，客户端: {client_id}")
-                            if self._validate_token(token):
+                            
+                            # ===== 检查失败次数 =====
+                            failed_count = self._failed_attempts.get(client_ip, 0)
+                            if failed_count >= self._max_failed_attempts:
+                                logger.warning(f"🚫【客户端】IP {client_ip} 失败次数已达上限，拒绝连接")
+                                await ws.send_json({"type": "error", "error": "尝试次数过多，请稍后再试"})
+                                await ws.close()
+                                return ws
+                            # ========================
+                            
+                            # 检查是否有密文
+                            if not self._token_enc:
+                                logger.error("❌【客户端】FRONTEND_TOKEN 密文未设置")
+                                await ws.send_json({"type": "auth_failed", "error": "服务器配置错误"})
+                                await ws.close()
+                                return ws
+                            
+                            # 用密码尝试解密
+                            try:
+                                decrypted_token = self._decrypt(self._token_enc, password)
+                                
+                                # 解密成功！
+                                self.valid_token = decrypted_token
+                                self._connection_locked = True
+                                self.current_client_id = client_id
                                 client_info['authenticated'] = True
                                 auth_received = True
+                                
+                                # 清除该IP的失败记录
+                                if client_ip in self._failed_attempts:
+                                    del self._failed_attempts[client_ip]
+                                
+                                # 踢掉其他连接
+                                await self._kick_all_other_clients(client_id)
                                 
                                 # 发送认证成功
                                 await ws.send_json({
@@ -282,15 +370,18 @@ class FrontendRelayServer:
                                         logger.info(f"🔌【客户端】WebSocket 连接关闭或出错，客户端: {client_id}")
                                         break
                                 break
-                            else:
-                                # 认证失败
-                                logger.warning(f"❌【客户端】客户端认证失败，token无效，客户端: {client_id}")
+                                
+                            except Exception as e:
+                                # 解密失败，密码错误
+                                self._failed_attempts[client_ip] = failed_count + 1
+                                logger.warning(f"❌【客户端】密码错误 ({self._failed_attempts[client_ip]}/{self._max_failed_attempts})，客户端: {client_id}")
                                 await ws.send_json({
                                     "type": "auth_failed",
                                     "error": "Invalid token",
                                     "timestamp": time.time()
                                 })
-                                break
+                                await ws.close()
+                                return ws
                         else:
                             # 未认证前收到其他消息，要求先认证
                             logger.warning(f"⚠️【客户端】客户端未认证就发送其他消息，客户端: {client_id}")
@@ -328,6 +419,14 @@ class FrontendRelayServer:
             if client_info in self.ws_clients:
                 self.ws_clients.remove(client_info)
                 self.stats["current_connections"] = len(self.ws_clients)
+                
+                # 如果是当前活动连接断开，解锁
+                if client_id == self.current_client_id:
+                    self._connection_locked = False
+                    self.current_client_id = None
+                    self.valid_token = None
+                    logger.info("🔓【客户端】连接断开，已解锁，可接受新连接")
+                
                 logger.info(f"🔌【客户端】连接断开，已清理: {client_id} (剩余连接数: {len(self.ws_clients)})")
         
         return ws
@@ -413,6 +512,8 @@ class FrontendRelayServer:
                 "authenticated": authenticated,
                 "unauthenticated": unauthenticated
             },
+            "connection_locked": self._connection_locked,
+            "current_client": self.current_client_id,
             "auth_enabled": True,
             "timestamp": time.time()
         })
@@ -614,7 +715,11 @@ class FrontendRelayServer:
             logger.debug(f"🔐【token验证】token 为空")
             return False
         
-        # 从环境变量读取的密钥
+        if not self.valid_token:
+            logger.debug(f"🔐【token验证】valid_token 未设置")
+            return False
+        
+        # 解密后的密钥
         is_valid = token == self.valid_token
         logger.debug(f"🔐【token验证】验证结果: {is_valid}")
         return is_valid
@@ -701,6 +806,7 @@ class FrontendRelayServer:
             "total_connections": self.stats["total_connections"],
             "messages_broadcast": self.stats["messages_broadcast"],
             "commands_processed": self.stats["commands_processed"],
+            "connection_locked": self._connection_locked,
             "uptime_seconds": uptime,
             "auth_enabled": True
         }
