@@ -8,6 +8,10 @@
 1. 启动完成 → 被动等待前端配置内容（不占 CPU）
 2. 收到配置内容 → 用配置内容解密环境变量密文
 3. 存入 data_manager → 发送「密钥已就绪」标签
+
+【安全机制】
+- 解密失败累计 3 次后锁定，拒绝后续解密请求
+- 解密成功后重置失败次数
 ==================================================
 """
 
@@ -40,6 +44,11 @@ class ConfigHandler:
         """
         self.data_manager = data_manager
         self._credentials_loaded = False
+        
+        # ========== 安全机制：失败次数限制 ==========
+        self._failed_attempts = 0
+        self._max_failed_attempts = 3
+        self._locked = False
     
     # ==================== 解密方法 ====================
     
@@ -87,6 +96,16 @@ class ConfigHandler:
             logger.warning("⚠️【配置处理器】收到空的配置内容")
             return
         
+        # 已锁定
+        if self._locked:
+            logger.warning("🔒【配置处理器】已锁定（失败次数过多），拒绝解密")
+            return
+        
+        # 已成功解密过
+        if self._credentials_loaded:
+            logger.info("📋【配置处理器】凭证已解密加载过，跳过")
+            return
+        
         logger.info("💾【配置处理器】收到配置内容，开始解密环境变量...")
         
         try:
@@ -97,6 +116,7 @@ class ConfigHandler:
             self._decrypt_and_store_database_credentials(config_content)
             
             self._credentials_loaded = True
+            self._failed_attempts = 0  # 成功时重置失败次数
             logger.info("✅【配置处理器】所有环境变量凭证解密完成")
             
             # ========== 发送标签给 TagDispatcher ==========
@@ -112,8 +132,12 @@ class ConfigHandler:
                 logger.error(f"❌【配置处理器】发送标签失败: {e}")
                 
         except Exception as e:
-            logger.error(f"❌【配置处理器】解密失败（配置内容错误或密文损坏）: {e}")
-            raise
+            self._failed_attempts += 1
+            logger.error(f"❌【配置处理器】解密失败 ({self._failed_attempts}/{self._max_failed_attempts}): {e}")
+            
+            if self._failed_attempts >= self._max_failed_attempts:
+                self._locked = True
+                logger.error("🔒【配置处理器】失败次数已达上限，已锁定！后续解密请求将被拒绝。")
     
     # ==================== 内部方法 ====================
     
