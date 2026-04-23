@@ -44,6 +44,10 @@ class PrivateHTTPFetcher:
         self.brain_store = None  # DataManager实例
         self.running = False
 
+        # ========== 密钥就绪标志 ==========
+        self._keys_ready = False
+        self._pending_work = False
+
         # API凭证（启动时获取一次）
         self.api_key = None
         self.api_secret = None
@@ -103,6 +107,21 @@ class PrivateHTTPFetcher:
         self.environment = "testnet" if "testnet" in self.BASE_URL else "live"
         logger.info(f"🔗 [HTTP获取器] 冷酷重启版初始化完成（环境: {self.environment}）")
 
+    # ==================== 标签接收 ====================
+
+    def on_keys_ready(self):
+        """
+        接收「密钥已就绪」标签
+        由 TagDispatcher 调用
+        """
+        self._keys_ready = True
+        logger.info("🔑【HTTP获取器】密钥已就绪，获得工作权限")
+        
+        if self._pending_work:
+            logger.info("🚀【HTTP获取器】开始执行待处理的工作")
+            asyncio.create_task(self._start_work())
+            self._pending_work = False
+
     # ==================== 启动方法 ====================
 
     async def start(self, brain_store):
@@ -112,29 +131,40 @@ class PrivateHTTPFetcher:
         Args:
             brain_store: DataManager实例
         """
-        logger.info(f"🚀 [HTTP获取器] 冷酷重启版启动（环境: {self.environment}）")
-
         self.brain_store = brain_store
-        self.running = True
+        
+        if self._keys_ready:
+            # 密钥已就绪，直接开始工作
+            await self._start_work()
+        else:
+            # 密钥未就绪，标记待执行，等待标签
+            logger.info("⏳【HTTP获取器】密钥未就绪，等待标签...")
+            self._pending_work = True
+        
+        return True
 
+    async def _start_work(self):
+        """实际执行启动逻辑"""
+        logger.info(f"🚀 [HTTP获取器] 冷酷重启版启动（环境: {self.environment}）")
+        
+        self.running = True
+        
         # 🔴 冷酷核心：force_close=True，用完就关，不留回味
-        # 这是防止僵尸连接的关键配置
         timeout = aiohttp.ClientTimeout(total=30)
         self.connector = aiohttp.TCPConnector(
-            force_close=True,           # 关键！每次请求后立即关闭连接
-            enable_cleanup_closed=True, # 自动清理已关闭的连接
-            limit=20,                   # 限制最大连接数
-            limit_per_host=10           # 每个主机限制
+            force_close=True,
+            enable_cleanup_closed=True,
+            limit=20,
+            limit_per_host=10
         )
         self.session = aiohttp.ClientSession(
             timeout=timeout,
             connector=self.connector
         )
-
+        
         # 创建主调度器任务
         self.scheduler_task = asyncio.create_task(self._controlled_scheduler())
         logger.info("✅ [HTTP获取器] 调度器已启动，force_close=True 生效")
-        return True
 
     # ==================== 机制1：平仓重置（预防性清理）====================
 
@@ -688,6 +718,8 @@ class PrivateHTTPFetcher:
         return {
             'timestamp': datetime.now().isoformat(),
             'running': self.running,
+            'keys_ready': self._keys_ready,
+            'pending_work': self._pending_work,
             'account_fetched': self.account_fetched,
             'account_fetch_success': self.account_fetch_success,
             'environment': self.environment,
