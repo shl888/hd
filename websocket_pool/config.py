@@ -6,7 +6,7 @@ from typing import Dict, Any
 # 交易所配置
 EXCHANGE_CONFIGS = {
     "binance": {
-        "ws_public_url": "wss://fstream.binance.com/market",
+        "ws_public_url": "wss://fstream.binance.com/market/ws",
         "rest_url": "https://fapi.binance.com",
         
         # 连接配置
