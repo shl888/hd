@@ -78,7 +78,12 @@ class WebSocketConnection:
     async def connect(self):
         """建立WebSocket连接"""
         try:
-            self.log_with_role("info", f"🌎【连接池】正在建立连接 {self.ws_url}")
+            # ===== 币安：基础地址拼接 /stream 路径 =====
+            connect_url = self.ws_url
+            if self.exchange == "binance" and not connect_url.endswith("/stream"):
+                connect_url = f"{connect_url}/stream"
+            
+            self.log_with_role("info", f"🌎【连接池】正在建立连接 {connect_url}")
             
             # 重置状态
             self.subscribed = False
@@ -87,7 +92,7 @@ class WebSocketConnection:
             # 建立连接（禁用websockets库的自动ping）
             self.ws = await asyncio.wait_for(
                 websockets.connect(
-                    self.ws_url,
+                    connect_url,
                     ping_interval=None,  # 禁用自动ping
                     ping_timeout=None,   # 禁用自动ping超时
                     close_timeout=5,
