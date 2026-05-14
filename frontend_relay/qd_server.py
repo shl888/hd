@@ -44,6 +44,10 @@ class FrontendRelayServer:
         self._connection_locked = False
         self.current_client_id = None
         
+        # 心跳检测
+        self._last_ping_time = 0
+        self._heartbeat_task = None
+        
         # 失败次数限制
         self._failed_attempts: Dict[str, int] = {}
         self._max_failed_attempts = 3
@@ -138,6 +142,15 @@ class FrontendRelayServer:
             self._connection_locked = False
             self.current_client_id = None
             self.valid_token = None
+    
+    # ==================== 后台心跳检测 ====================
+    
+    async def _check_heartbeat(self):
+        """后台任务：每3秒检查一次心跳，超过15秒无ping则解锁"""
+        while True:
+            await asyncio.sleep(3)
+            if self._connection_locked and time.time() - self._last_ping_time > 15:
+                self._unlock("心跳超时15秒")
     
     # ==================== 踢掉其他连接 ====================
     
@@ -238,6 +251,7 @@ class FrontendRelayServer:
                                 self.valid_token = decrypted_token
                                 self._connection_locked = True
                                 self.current_client_id = client_id
+                                self._last_ping_time = time.time()
                                 client_info['authenticated'] = True
                                 auth_received = True
                                 
@@ -264,6 +278,7 @@ class FrontendRelayServer:
                                             msg_type = data2.get('type')
                                             
                                             if msg_type == 'ping':
+                                                self._last_ping_time = time.time()
                                                 logger.debug(f"💓【客户端】收到心跳 ping，客户端: {client_id}")
                                                 await ws.send_json({
                                                     "type": "pong",
@@ -431,7 +446,7 @@ class FrontendRelayServer:
                 self.ws_clients.remove(client_info)
                 self.stats["current_connections"] = len(self.ws_clients)
             
-            # 统一解锁：只要锁还占着就释放
+            # 统一解锁
             self._unlock("连接断开")
             
             logger.info(f"🔌【客户端】连接断开，已清理: {client_id} (剩余连接数: {len(self.ws_clients)})")
@@ -765,6 +780,9 @@ class FrontendRelayServer:
             self.site = web.TCPSite(self.runner, '0.0.0.0', self.port)
             await self.site.start()
             
+            # 启动后台心跳检测
+            self._heartbeat_task = asyncio.create_task(self._check_heartbeat())
+            
             logger.info(f"✅【客户端】前端中继服务器启动成功")
             logger.info(f"📡【客户端】WebSocket: ws://0.0.0.0:{self.port}/ws")
             logger.info(f"📨【客户端】HTTP API: http://0.0.0.0:{self.port}/api/cmd")
@@ -784,6 +802,11 @@ class FrontendRelayServer:
     async def stop(self):
         """停止前端中继服务器"""
         logger.info("🛑【客户端】停止前端中继服务器...")
+        
+        # 停止心跳检测
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            self._heartbeat_task = None
         
         # 关闭所有WebSocket连接
         for client in self.ws_clients:
