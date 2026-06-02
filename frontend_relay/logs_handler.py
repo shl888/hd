@@ -259,20 +259,30 @@ class LogsHandler:
     
     def _get_container_id(self) -> str:
         """
-        获取当前容器的 ID
-        
-        在容器内，hostname 就是容器 ID（短格式）
+        获取当前容器的完整 ID
+        从 /proc/self/cgroup 中读取完整 64 位 ID
         """
         try:
+            with open('/proc/self/cgroup', 'r') as f:
+                for line in f:
+                    if 'docker' in line:
+                        # 格式示例：12:memory:/docker/64位完整ID
+                        parts = line.strip().split('/')
+                        if len(parts) >= 2:
+                            full_id = parts[-1]
+                            logger.debug(f"📋【日志处理器】从 cgroup 获取完整容器ID: {full_id}")
+                            return full_id
+        except Exception as e:
+            logger.debug(f"📋【日志处理器】从 cgroup 读取失败: {e}")
+        
+        # 降级：使用 hostname（短ID）
+        try:
             with open('/etc/hostname', 'r') as f:
-                container_id = f.read().strip()
-                logger.debug(f"📋【日志处理器】从 /etc/hostname 获取容器ID: {container_id}")
-                return container_id
+                short_id = f.read().strip()
+                logger.debug(f"📋【日志处理器】降级使用 hostname: {short_id}")
+                return short_id
         except:
-            # 降级：尝试通过环境变量获取
-            container_id = os.getenv('HOSTNAME', 'unknown')
-            logger.debug(f"📋【日志处理器】从环境变量 HOSTNAME 获取容器ID: {container_id}")
-            return container_id
+            return os.getenv('HOSTNAME', 'unknown')
     
     async def _execute_docker_logs(self, command: str) -> str:
         """
