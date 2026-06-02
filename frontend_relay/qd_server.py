@@ -52,8 +52,8 @@ class FrontendRelayServer:
         self._failed_attempts: Dict[str, int] = {}
         self._max_failed_attempts = 3
         
-        # WebSocket客户端管理（存储认证状态）
-        self.ws_clients: List[Dict] = []  # 每个元素: {'ws': ws, 'authenticated': bool, 'client_id': str}
+        # 【修复】WebSocket客户端管理（改为字典，key=client_id，避免重复连接）
+        self.ws_clients: Dict[str, Dict] = {}
         
         # 基础统计
         self.stats = {
@@ -156,12 +156,13 @@ class FrontendRelayServer:
     
     async def _kick_all_other_clients(self, keep_client_id: str):
         """踢掉除指定客户端外的所有连接"""
-        for client in self.ws_clients:
-            if client['client_id'] != keep_client_id:
+        for cid in list(self.ws_clients.keys()):
+            if cid != keep_client_id:
                 try:
-                    await client['ws'].close()
+                    await self.ws_clients[cid]['ws'].close()
                 except:
                     pass
+                self.ws_clients.pop(cid, None)
     
     # ==================== 标签接收 ====================
     
@@ -198,6 +199,15 @@ class FrontendRelayServer:
             return ws
         # ========================
         
+        # 【修复】如果已有同 client_id 的连接，先清理旧的
+        if client_id in self.ws_clients:
+            old_ws = self.ws_clients[client_id]['ws']
+            try:
+                await old_ws.close()
+            except:
+                pass
+            self.ws_clients.pop(client_id, None)
+        
         client_info = {
             'ws': ws,
             'authenticated': False,
@@ -205,7 +215,7 @@ class FrontendRelayServer:
             'ip': client_ip,
             'password': None
         }
-        self.ws_clients.append(client_info)
+        self.ws_clients[client_id] = client_info
         self.stats["total_connections"] += 1
         self.stats["current_connections"] = len(self.ws_clients)
         
@@ -426,7 +436,7 @@ class FrontendRelayServer:
                     break
             
             # 认证超时处理
-            if not auth_received and client_info in self.ws_clients:
+            if not auth_received and client_id in self.ws_clients:
                 logger.warning(f"⏰【客户端】客户端认证超时（{auth_timeout}秒）: {client_id}")
                 try:
                     await ws.send_json({
@@ -442,9 +452,8 @@ class FrontendRelayServer:
         
         finally:
             # 4. 清理连接
-            if client_info in self.ws_clients:
-                self.ws_clients.remove(client_info)
-                self.stats["current_connections"] = len(self.ws_clients)
+            self.ws_clients.pop(client_id, None)
+            self.stats["current_connections"] = len(self.ws_clients)
             
             # 统一解锁
             self._unlock("连接断开")
@@ -517,7 +526,7 @@ class FrontendRelayServer:
         uptime = time.time() - self.stats["server_start"]
         
         # 统计已认证和未认证的客户端
-        authenticated = len([c for c in self.ws_clients if c.get('authenticated', False)])
+        authenticated = len([c for c in self.ws_clients.values() if c.get('authenticated', False)])
         unauthenticated = len(self.ws_clients) - authenticated
         
         logger.debug(f"📊【客户端】状态查询，已认证: {authenticated}，未认证: {unauthenticated}")
@@ -666,7 +675,7 @@ class FrontendRelayServer:
             stats_data: StatsHandler 计算好的统计结果，包含净盈亏、交易次数等
         """
         logger.debug(f"📊【客户端】【统计结果推送】StatsHandler 调用推送方法")
-        logger.debug(f"📊【客户端】【统计结果推送】当前已认证客户端数: {len([c for c in self.ws_clients if c.get('authenticated', False)])}")
+        logger.debug(f"📊【客户端】【统计结果推送】当前已认证客户端数: {len([c for c in self.ws_clients.values() if c.get('authenticated', False)])}")
         
         if not self.ws_clients:
             logger.warning(f"⚠️【客户端】【统计结果推送】没有客户端连接，跳过推送")
@@ -694,7 +703,7 @@ class FrontendRelayServer:
         安全广播 - 只推送给已认证的客户端，带详细日志
         """
         # 过滤出已认证的客户端
-        authenticated_clients = [c for c in self.ws_clients if c.get('authenticated', False)]
+        authenticated_clients = [c for c in self.ws_clients.values() if c.get('authenticated', False)]
         
         if not authenticated_clients:
             logger.debug(f"⚠️【客户端】【广播】没有已认证的客户端，跳过")
@@ -720,11 +729,11 @@ class FrontendRelayServer:
         if dead_clients:
             logger.info(f"🧹【客户端】【清理连接】清理 {len(dead_clients)} 个死连接")
             for client in dead_clients:
-                if client in self.ws_clients:
-                    # 如果死的是当前持有者，解锁
-                    if client['client_id'] == self.current_client_id:
+                cid = client.get('client_id')
+                if cid and cid in self.ws_clients:
+                    if cid == self.current_client_id:
                         self._unlock("广播发现连接已死")
-                    self.ws_clients.remove(client)
+                    self.ws_clients.pop(cid, None)
             self.stats["current_connections"] = len(self.ws_clients)
         
         self.stats["messages_broadcast"] += len(authenticated_clients) - len(dead_clients)
@@ -809,7 +818,7 @@ class FrontendRelayServer:
             self._heartbeat_task = None
         
         # 关闭所有WebSocket连接
-        for client in self.ws_clients:
+        for cid, client in self.ws_clients.items():
             try:
                 await client['ws'].close()
             except:
@@ -830,7 +839,7 @@ class FrontendRelayServer:
         """获取统计摘要"""
         uptime = time.time() - self.stats["server_start"]
         
-        authenticated = len([c for c in self.ws_clients if c.get('authenticated', False)])
+        authenticated = len([c for c in self.ws_clients.values() if c.get('authenticated', False)])
         
         return {
             "running": self.runner is not None,
