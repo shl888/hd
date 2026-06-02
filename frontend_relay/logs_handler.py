@@ -23,6 +23,7 @@
 import asyncio
 import logging
 import os
+import re
 import shlex
 import time
 from aiohttp import web
@@ -260,22 +261,35 @@ class LogsHandler:
     def _get_container_id(self) -> str:
         """
         获取当前容器的完整 ID
-        从 /proc/self/cgroup 中读取完整 64 位 ID
+        从 /proc/self/mountinfo 中读取完整 64 位 ID（支持 cgroup v1/v2）
         """
+        try:
+            with open('/proc/self/mountinfo', 'r') as f:
+                content = f.read()
+                # 匹配 64 位十六进制字符串（容器完整 ID）
+                match = re.search(r'[a-f0-9]{64}', content)
+                if match:
+                    full_id = match.group(0)
+                    logger.debug(f"📋【日志处理器】从 mountinfo 获取完整容器ID: {full_id}")
+                    return full_id
+        except Exception as e:
+            logger.debug(f"📋【日志处理器】从 mountinfo 读取失败: {e}")
+        
+        # 降级方案1：从 /proc/self/cgroup 读取（cgroup v1）
         try:
             with open('/proc/self/cgroup', 'r') as f:
                 for line in f:
                     if 'docker' in line:
-                        # 格式示例：12:memory:/docker/64位完整ID
                         parts = line.strip().split('/')
                         if len(parts) >= 2:
-                            full_id = parts[-1]
-                            logger.debug(f"📋【日志处理器】从 cgroup 获取完整容器ID: {full_id}")
-                            return full_id
+                            # 可能是完整 ID 也可能是短 ID，都返回
+                            cid = parts[-1]
+                            logger.debug(f"📋【日志处理器】从 cgroup 获取容器ID: {cid}")
+                            return cid
         except Exception as e:
             logger.debug(f"📋【日志处理器】从 cgroup 读取失败: {e}")
         
-        # 降级：使用 hostname（短ID）
+        # 降级方案2：使用 hostname（短ID）
         try:
             with open('/etc/hostname', 'r') as f:
                 short_id = f.read().strip()
